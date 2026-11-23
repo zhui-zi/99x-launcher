@@ -6,7 +6,7 @@ export interface AutoJoinOptions {
   serverName: string
   ip: string
   port: number
-  targetMaxPlayers: number // trigger join when currentPlayers <= targetMaxPlayers
+  targetMaxPlayers: number
   pollDelayMs: number
   concurrency: number
 }
@@ -46,24 +46,42 @@ interface ActiveSession {
 }
 
 let sessionSeq = 0
-let currentSession: ActiveSession | null = null
+const activeSessions = new Map<string, ActiveSession>()
 
-export function stopAutoJoin(): { stopped: boolean } {
-  if (!currentSession) return { stopped: false }
-  currentSession.stopped = true
-  for (const t of currentSession.timers) {
+function clearSession(session: ActiveSession): void {
+  session.stopped = true
+  for (const t of session.timers) {
     clearTimeout(t)
   }
-  currentSession.timers.clear()
-  currentSession = null
-  return { stopped: true }
+  session.timers.clear()
+}
+
+export function stopAutoJoin(serverId?: string): { stopped: boolean; activeCount: number } {
+  if (serverId) {
+    const session = activeSessions.get(serverId)
+    if (!session) return { stopped: false, activeCount: activeSessions.size }
+    clearSession(session)
+    activeSessions.delete(serverId)
+    return { stopped: true, activeCount: activeSessions.size }
+  }
+
+  if (activeSessions.size === 0) return { stopped: false, activeCount: 0 }
+  for (const session of activeSessions.values()) {
+    clearSession(session)
+  }
+  activeSessions.clear()
+  return { stopped: true, activeCount: 0 }
 }
 
 export function startAutoJoin(
   options: AutoJoinOptions,
   getWindow: () => BrowserWindow | null
-): { started: boolean; sessionId: number } {
-  stopAutoJoin()
+): { started: boolean; sessionId: number; activeCount: number } {
+  const existing = activeSessions.get(options.serverId)
+  if (existing) {
+    clearSession(existing)
+    activeSessions.delete(options.serverId)
+  }
 
   const session: ActiveSession = {
     id: ++sessionSeq,
@@ -73,19 +91,19 @@ export function startAutoJoin(
     stopped: false,
     timers: new Set()
   }
-  currentSession = session
+  activeSessions.set(options.serverId, session)
 
   const concurrency = Math.max(1, Math.min(3, options.concurrency || 1))
-  const delay = Math.max(500, Math.min(10000, options.pollDelayMs || 1500))
+  const delay = Math.max(300, Math.min(10000, options.pollDelayMs || 500))
 
   const runSlot = async () => {
-    if (session.stopped || currentSession !== session) return
+    if (session.stopped || activeSessions.get(options.serverId) !== session) return
 
     session.attempts += 1
     const attemptNo = session.attempts
     const res = await queryA2SInfo(options.ip, options.port, 1600)
 
-    if (session.stopped || currentSession !== session) return
+    if (session.stopped || activeSessions.get(options.serverId) !== session) return
 
     const elapsedMs = Date.now() - session.startedAt
     const win = getWindow()
@@ -107,11 +125,7 @@ export function startAutoJoin(
       }
 
       if (res.players <= options.targetMaxPlayers) {
-        // Slot available! Stop session and notify renderer
-        session.stopped = true
-        for (const t of session.timers) clearTimeout(t)
-        session.timers.clear()
-        if (currentSession === session) currentSession = null
+        stopAutoJoin()
 
         const payload: AutoJoinSuccessPayload = {
           serverId: options.serverId,
@@ -154,7 +168,6 @@ export function startAutoJoin(
     session.timers.add(timer)
   }
 
-  // Stagger slots evenly across the poll interval
   for (let i = 0; i < concurrency; i++) {
     const stagger = Math.round((delay / concurrency) * i)
     const timer = setTimeout(() => {
@@ -164,5 +177,5 @@ export function startAutoJoin(
     session.timers.add(timer)
   }
 
-  return { started: true, sessionId: session.id }
+  return { started: true, sessionId: session.id, activeCount: activeSessions.size }
 }

@@ -97,7 +97,7 @@ const DEFAULT_SETTINGS: LauncherSettings = {
   closeBehavior: 'tray',
   minimizeToTray: false,
   autoJoinDefaultThresholdOffset: 1,
-  autoJoinPollDelayMs: 1500,
+  autoJoinPollDelayMs: 500,
   autoJoinConcurrency: 1
 }
 

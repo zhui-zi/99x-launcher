@@ -131,9 +131,8 @@ export interface A2SPlayer {
   duration: number
 }
 
-export interface AutoJoinState {
-  active: boolean
-  server: ServerItem | null
+export interface AutoJoinTask {
+  server: ServerItem
   targetMaxPlayers: number
   pollDelayMs: number
   concurrency: number
@@ -142,7 +141,10 @@ export interface AutoJoinState {
   maxPlayers: number
   ping: number
   elapsedMs: number
-  status: 'idle' | 'polling' | 'found'
+}
+
+export interface AutoJoinState {
+  tasks: Record<string, AutoJoinTask>
   logs: Array<{ time: string; text: string; type: 'info' | 'success' | 'warn' }>
 }
 
@@ -210,8 +212,8 @@ export interface Cs2Api {
       targetMaxPlayers: number
       pollDelayMs: number
       concurrency: number
-    }) => Promise<{ started: boolean; sessionId: number }>
-    stop: () => Promise<{ stopped: boolean }>
+    }) => Promise<{ started: boolean; sessionId: number; activeCount: number }>
+    stop: (serverId?: string) => Promise<{ stopped: boolean; activeCount: number }>
     onTick: (cb: (payload: any) => void) => () => void
     onSuccess: (cb: (payload: any) => void) => () => void
     onTrayStop: (cb: () => void) => () => void

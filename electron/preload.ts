@@ -30,7 +30,7 @@ const api = {
   },
   autoJoin: {
     start: (options: unknown) => ipcRenderer.invoke('autojoin:start', options),
-    stop: () => ipcRenderer.invoke('autojoin:stop'),
+    stop: (serverId?: string) => ipcRenderer.invoke('autojoin:stop', serverId),
     onTick: (cb: (payload: any) => void) => {
       const listener = (_: unknown, payload: any) => cb(payload)
       ipcRenderer.on('auto-join-tick', listener)

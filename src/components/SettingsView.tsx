@@ -166,11 +166,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-[12.5px]">
           <div>
             <label className="block text-[11.5px] text-[#5D5D5D] dark:text-[#A0A0A0] mb-1">
-              挤服轮询间隔 (ms，推荐 1000-2000)
+              挤服轮询间隔 (ms，默认 500)
             </label>
             <input
               type="number"
-              min={500}
+              min={300}
               max={10000}
               step={100}
               value={settings.autoJoinPollDelayMs}

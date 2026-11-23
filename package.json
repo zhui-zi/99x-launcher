@@ -1,6 +1,6 @@
 {
   "name": "99x-launcher",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "99x launcher — WinUI 3 & Fluent 2 CS2 Community Server Launcher (EXG / ZED / FYS)",
   "main": "dist-electron/main.js",
   "scripts": {

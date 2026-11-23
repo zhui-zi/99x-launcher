@@ -7,7 +7,7 @@ interface ServerTableProps {
   servers: ServerItem[]
   favorites: Set<string>
   watched: Set<string>
-  autoJoinServerId: string | null
+  autoJoinServerIds: Set<string>
   onToggleFavorite: (id: string) => void
   onToggleWatch: (id: string) => void
   onJoin: (server: ServerItem) => void
@@ -21,7 +21,7 @@ export const ServerTable: React.FC<ServerTableProps> = ({
   servers,
   favorites,
   watched,
-  autoJoinServerId,
+  autoJoinServerIds,
   onToggleFavorite,
   onToggleWatch,
   onJoin,
@@ -49,7 +49,7 @@ export const ServerTable: React.FC<ServerTableProps> = ({
             const diff = DIFFICULTY_STYLES[server.mapDifficulty]
             const isFav = favorites.has(server.id)
             const isWatch = watched.has(server.id)
-            const isQueueing = autoJoinServerId === server.id
+            const isQueueing = autoJoinServerIds.has(server.id)
             const isFull = server.online && server.maxPlayers > 0 && server.players >= server.maxPlayers
             return (
               <tr

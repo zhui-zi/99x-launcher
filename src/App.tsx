@@ -62,7 +62,7 @@ const DEFAULT_SETTINGS: LauncherSettings = {
   closeBehavior: 'tray',
   minimizeToTray: false,
   autoJoinDefaultThresholdOffset: 1,
-  autoJoinPollDelayMs: 1500,
+  autoJoinPollDelayMs: 500,
   autoJoinConcurrency: 1
 }
 
@@ -118,19 +118,9 @@ export function App() {
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
-  // Auto-Join State
+  // Multi-server Auto-Join State
   const [autoJoin, setAutoJoin] = useState<AutoJoinState>({
-    active: false,
-    server: null,
-    targetMaxPlayers: 63,
-    pollDelayMs: 1500,
-    concurrency: 1,
-    attempts: 0,
-    currentPlayers: -1,
-    maxPlayers: 64,
-    ping: -1,
-    elapsedMs: 0,
-    status: 'idle',
+    tasks: {},
     logs: []
   })
 
@@ -359,14 +349,21 @@ export function App() {
 
     const unsubTick = window.cs2Api.autoJoin.onTick((tick) => {
       setAutoJoin((prev) => {
-        if (!prev.active) return prev
+        const existing = prev.tasks[tick.serverId]
+        if (!existing) return prev
         return {
           ...prev,
-          attempts: tick.attempts,
-          currentPlayers: tick.currentPlayers,
-          maxPlayers: tick.maxPlayers > 0 ? tick.maxPlayers : prev.maxPlayers,
-          ping: tick.ping,
-          elapsedMs: tick.elapsedMs
+          tasks: {
+            ...prev.tasks,
+            [tick.serverId]: {
+              ...existing,
+              attempts: tick.attempts,
+              currentPlayers: tick.currentPlayers,
+              maxPlayers: tick.maxPlayers > 0 ? tick.maxPlayers : existing.maxPlayers,
+              ping: tick.ping,
+              elapsedMs: tick.elapsedMs
+            }
+          }
         }
       })
     })
@@ -385,18 +382,15 @@ export function App() {
       showToast(`挤服成功！正在自动连接 ${payload.serverName} (${payload.currentPlayers}/${payload.maxPlayers})`)
 
       setAutoJoin((prev) => {
-        if (prev.server) recordMapPlay(prev.server)
+        const winnerTask = prev.tasks[payload.serverId]
+        if (winnerTask?.server) recordMapPlay(winnerTask.server)
         return {
-          ...prev,
-          active: false,
-          status: 'found',
-          currentPlayers: payload.currentPlayers,
-          ping: payload.ping,
+          tasks: {},
           logs: [
             ...prev.logs.slice(-30),
             {
               time: nowTimeStr(),
-              text: `发现空位 (${payload.currentPlayers}/${payload.maxPlayers})，已触发提示音并自动连接！`,
+              text: `${payload.serverName} 发现空位 (${payload.currentPlayers}/${payload.maxPlayers})，已自动连接并停止其余挤服队列！`,
               type: 'success'
             }
           ]
@@ -413,7 +407,7 @@ export function App() {
     })
 
     const unsubTrayStop = window.cs2Api.autoJoin.onTrayStop(() => {
-      setAutoJoin((prev) => ({ ...prev, active: false, status: 'idle' }))
+      setAutoJoin((prev) => ({ ...prev, tasks: {} }))
     })
 
     return () => {
@@ -676,9 +670,12 @@ export function App() {
     })
   }
 
+  const autoJoinIds = useMemo(() => new Set(Object.keys(autoJoin.tasks)), [autoJoin.tasks])
+  const hasAutoJoinActive = autoJoinIds.size > 0
+
   const handleStartAutoJoin = async (server: ServerItem, customThreshold?: number) => {
-    if (autoJoin.active && autoJoin.server?.id === server.id && customThreshold === undefined) {
-      await handleStopAutoJoin()
+    if (autoJoin.tasks[server.id] && customThreshold === undefined) {
+      await handleStopAutoJoinOne(server.id)
       return
     }
     const maxP = server.maxPlayers > 0 ? server.maxPlayers : 64
@@ -687,26 +684,30 @@ export function App() {
         ? Math.max(0, Math.min(maxP, customThreshold))
         : Math.max(0, maxP - settings.autoJoinDefaultThresholdOffset)
 
-    setAutoJoin({
-      active: true,
-      server,
-      targetMaxPlayers: threshold,
-      pollDelayMs: settings.autoJoinPollDelayMs,
-      concurrency: settings.autoJoinConcurrency,
-      attempts: 0,
-      currentPlayers: server.players,
-      maxPlayers: maxP,
-      ping: server.ping,
-      elapsedMs: 0,
-      status: 'polling',
+    setAutoJoin((prev) => ({
+      tasks: {
+        ...prev.tasks,
+        [server.id]: {
+          server,
+          targetMaxPlayers: threshold,
+          pollDelayMs: settings.autoJoinPollDelayMs,
+          concurrency: settings.autoJoinConcurrency,
+          attempts: 0,
+          currentPlayers: server.players,
+          maxPlayers: maxP,
+          ping: server.ping,
+          elapsedMs: 0
+        }
+      },
       logs: [
+        ...prev.logs.slice(-30),
         {
           time: nowTimeStr(),
-          text: `开始自动挤服 ${server.displayName} (${server.address})，目标人数 ≤ ${threshold}`,
+          text: `加入挤服队列：${server.displayName} (${server.address})，目标人数 ≤ ${threshold}`,
           type: 'info'
         }
       ]
-    })
+    }))
 
     await window.cs2Api?.autoJoin.start({
       serverId: server.id,
@@ -719,10 +720,31 @@ export function App() {
     })
   }
 
-  const handleStopAutoJoin = async () => {
+  const handleStopAutoJoinOne = async (serverId: string) => {
+    await window.cs2Api?.autoJoin.stop(serverId)
+    setAutoJoin((prev) => {
+      const target = prev.tasks[serverId]
+      const nextTasks = { ...prev.tasks }
+      delete nextTasks[serverId]
+      return {
+        tasks: nextTasks,
+        logs: target
+          ? [
+              ...prev.logs.slice(-30),
+              { time: nowTimeStr(), text: `已停止挤服：${target.server.displayName}`, type: 'warn' }
+            ]
+          : prev.logs
+      }
+    })
+  }
+
+  const handleStopAllAutoJoin = async () => {
     await window.cs2Api?.autoJoin.stop()
-    setAutoJoin((prev) => ({ ...prev, active: false, status: 'idle' }))
-    showToast('已停止自动挤服')
+    setAutoJoin((prev) => ({
+      tasks: {},
+      logs: [...prev.logs.slice(-30), { time: nowTimeStr(), text: '已停止全部挤服队列', type: 'warn' }]
+    }))
+    showToast('已停止全部自动挤服')
   }
 
   const handleCopyAddress = (server: ServerItem) => {
@@ -802,14 +824,14 @@ export function App() {
           activeTab={activeTab}
           onSelectTab={setActiveTab}
           activeCommunity={settings.activeCommunity}
-          autoJoinActive={autoJoin.active}
+          autoJoinActive={hasAutoJoinActive}
           watchedCount={watchedServerIds.length + watchedMapKeywords.length}
         />
 
         {/* WinUI 3 Rounded Content Surface */}
         <main className="flex-1 overflow-y-auto bg-[#F9F9F9] dark:bg-[#272727] rounded-tl-lg border-t border-l border-black/[0.05] dark:border-white/[0.06] relative">
           {activeTab === 'servers' && (
-            <div className={`p-5 space-y-4 max-w-[1440px] mx-auto ${autoJoin.active ? 'pb-28' : 'pb-10'}`}>
+            <div className={`p-5 space-y-4 max-w-[1440px] mx-auto ${hasAutoJoinActive ? 'pb-28' : 'pb-10'}`}>
               {/* Community Switcher (WinUI 3 Pivot / Segmented Control) */}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="inline-flex items-center p-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.05] dark:border-white/[0.06]">
@@ -1015,9 +1037,7 @@ export function App() {
                                   server={server}
                                   isFavorite={favoriteSet.has(server.id)}
                                   isWatched={watchedSet.has(server.id)}
-                                  isAutoJoining={
-                                    autoJoin.active && autoJoin.server?.id === server.id
-                                  }
+                                  isAutoJoining={autoJoinIds.has(server.id)}
                                   onToggleFavorite={handleToggleFavorite}
                                   onToggleWatch={handleToggleWatch}
                                   onJoin={handleJoinServer}
@@ -1033,7 +1053,7 @@ export function App() {
                               servers={bucket.servers}
                               favorites={favoriteSet}
                               watched={watchedSet}
-                              autoJoinServerId={autoJoin.active ? autoJoin.server?.id || null : null}
+                              autoJoinServerIds={autoJoinIds}
                               onToggleFavorite={handleToggleFavorite}
                               onToggleWatch={handleToggleWatch}
                               onJoin={handleJoinServer}
@@ -1141,12 +1161,14 @@ export function App() {
         </main>
       </div>
 
-      {/* Floating Auto-Join Bar */}
+      {/* Floating Multi-Server Auto-Join Bar */}
       <AutoJoinBar
         state={autoJoin}
-        onStop={handleStopAutoJoin}
-        onUpdateThreshold={(t) => {
-          if (autoJoin.server) handleStartAutoJoin(autoJoin.server, t)
+        onStopOne={handleStopAutoJoinOne}
+        onStopAll={handleStopAllAutoJoin}
+        onUpdateThreshold={(serverId, t) => {
+          const task = autoJoin.tasks[serverId]
+          if (task) handleStartAutoJoin(task.server, t)
         }}
         onTestSound={() => playSuccessSound(settings.soundVolume)}
       />

@@ -203,11 +203,11 @@ function registerIpcHandlers() {
       queryServersBatch(targets, concurrency ?? 12, 1400)
   )
 
-  // Auto-Join (挤服)
+  // Auto-Join (multi-server concurrent queue)
   ipcMain.handle('autojoin:start', (_, options: AutoJoinOptions) =>
     startAutoJoin(options, () => mainWindow)
   )
-  ipcMain.handle('autojoin:stop', () => stopAutoJoin())
+  ipcMain.handle('autojoin:stop', (_, serverId?: string) => stopAutoJoin(serverId))
 
   // Game Launching & Path Detection
   ipcMain.handle('game:detectPaths', () => detectGamePaths())
