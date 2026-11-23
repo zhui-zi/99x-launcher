@@ -1,0 +1,76 @@
+import { contextBridge, ipcRenderer } from 'electron'
+
+const api = {
+  window: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
+    close: () => ipcRenderer.invoke('window:close'),
+    hideToTray: () => ipcRenderer.invoke('window:hideToTray'),
+    quit: () => ipcRenderer.invoke('window:quit'),
+    isMaximized: () => ipcRenderer.invoke('window:isMaximized')
+  },
+  storage: {
+    load: () => ipcRenderer.invoke('storage:load'),
+    save: (data: unknown) => ipcRenderer.invoke('storage:save', data)
+  },
+  community: {
+    fetchServers: (community: 'exg' | 'zed' | 'fys') =>
+      ipcRenderer.invoke('community:fetchServers', community)
+  },
+  exg: {
+    fetchOnlineStats: () => ipcRenderer.invoke('exg:fetchOnlineStats'),
+    fetchMapDict: () => ipcRenderer.invoke('exg:fetchMapDict'),
+    importLocalJson: () => ipcRenderer.invoke('exg:importLocalJson')
+  },
+  a2s: {
+    info: (ip: string, port: number) => ipcRenderer.invoke('a2s:info', ip, port),
+    players: (ip: string, port: number) => ipcRenderer.invoke('a2s:players', ip, port),
+    batch: (targets: Array<{ ip: string; port: number }>, concurrency?: number) =>
+      ipcRenderer.invoke('a2s:batch', targets, concurrency)
+  },
+  autoJoin: {
+    start: (options: unknown) => ipcRenderer.invoke('autojoin:start', options),
+    stop: () => ipcRenderer.invoke('autojoin:stop'),
+    onTick: (cb: (payload: any) => void) => {
+      const listener = (_: unknown, payload: any) => cb(payload)
+      ipcRenderer.on('auto-join-tick', listener)
+      return () => ipcRenderer.removeListener('auto-join-tick', listener)
+    },
+    onSuccess: (cb: (payload: any) => void) => {
+      const listener = (_: unknown, payload: any) => cb(payload)
+      ipcRenderer.on('auto-join-success', listener)
+      return () => ipcRenderer.removeListener('auto-join-success', listener)
+    },
+    onTrayStop: (cb: () => void) => {
+      const listener = () => cb()
+      ipcRenderer.on('tray-stop-autojoin', listener)
+      return () => ipcRenderer.removeListener('tray-stop-autojoin', listener)
+    }
+  },
+  game: {
+    detectPaths: () => ipcRenderer.invoke('game:detectPaths'),
+    isRunning: () => ipcRenderer.invoke('game:isRunning'),
+    connect: (params: unknown) => ipcRenderer.invoke('game:connect', params),
+    pickDirectory: (title: string) => ipcRenderer.invoke('game:pickDirectory', title)
+  },
+  maps: {
+    scan: (cs2Path: string) => ipcRenderer.invoke('maps:scan', cs2Path),
+    delete: (paths: string[], moveToTrash: boolean) =>
+      ipcRenderer.invoke('maps:delete', paths, moveToTrash),
+    openFolder: (targetPath: string) => ipcRenderer.invoke('maps:openFolder', targetPath)
+  },
+  cfg: {
+    list: (cs2Path: string) => ipcRenderer.invoke('cfg:list', cs2Path),
+    read: (cs2Path: string, fileName: string) => ipcRenderer.invoke('cfg:read', cs2Path, fileName),
+    write: (cs2Path: string, fileName: string, content: string) =>
+      ipcRenderer.invoke('cfg:write', cs2Path, fileName, content)
+  },
+  shell: {
+    openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url)
+  },
+  notify: {
+    show: (title: string, body: string) => ipcRenderer.invoke('notify:show', title, body)
+  }
+}
+
+contextBridge.exposeInMainWorld('cs2Api', api)

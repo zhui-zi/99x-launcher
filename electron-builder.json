@@ -1,0 +1,33 @@
+{
+  "appId": "com.99x.launcher",
+  "productName": "99x launcher",
+  "asar": true,
+  "compression": "maximum",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "dist-electron/**/*",
+    "build/icon.ico",
+    "package.json",
+    "!node_modules/**/*"
+  ],
+  "electronLanguages": [
+    "zh-CN"
+  ],
+  "win": {
+    "icon": "build/icon.ico",
+    "target": [
+      {
+        "target": "portable",
+        "arch": [
+          "x64"
+        ]
+      }
+    ]
+  },
+  "portable": {
+    "artifactName": "99x-launcher.exe"
+  }
+}

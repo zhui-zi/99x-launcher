@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+    user-select: none;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  input,
+  textarea,
+  .selectable {
+    user-select: text;
+  }
+}
+
+@layer components {
+  .fluent-card {
+    @apply rounded-lg bg-white/95 dark:bg-[#2B2B2B]/95 border border-black/[0.06] dark:border-white/[0.07] shadow-fluent-card;
+  }
+
+  .fluent-btn-accent {
+    @apply rounded-md bg-[#0067C0] hover:bg-[#005FB8] active:bg-[#00539C] dark:bg-[#60CDFF] dark:hover:bg-[#4CC2FF] dark:active:bg-[#3BB5F5] text-white dark:text-[#001F33] font-medium border border-black/[0.08] border-b-black/[0.22] dark:border-white/[0.12] transition-colors;
+  }
+
+  .fluent-btn-standard {
+    @apply rounded-md bg-white/80 hover:bg-white dark:bg-white/[0.06] dark:hover:bg-white/[0.09] text-[#1A1A1A] dark:text-[#F3F3F3] border border-black/[0.08] border-b-black/[0.16] dark:border-white/[0.08] transition-colors;
+  }
+
+  .fluent-input {
+    @apply rounded-md bg-white/85 dark:bg-[#272727] border border-black/[0.08] border-b-black/[0.35] dark:border-white/[0.08] dark:border-b-white/[0.45] focus:bg-white dark:focus:bg-[#1F1F1F] focus:border-b-2 focus:border-b-[#0067C0] dark:focus:border-b-[#60CDFF] outline-none transition-all;
+  }
+}
+
+.app-drag {
+  -webkit-app-region: drag;
+}
+
+.app-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* WinUI 3 minimal overlay scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.42);
+}
