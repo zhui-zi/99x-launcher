@@ -65,6 +65,10 @@ const api = {
     write: (cs2Path: string, fileName: string, content: string) =>
       ipcRenderer.invoke('cfg:write', cs2Path, fileName, content)
   },
+  app: {
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    checkUpdate: () => ipcRenderer.invoke('app:checkUpdate')
+  },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url)
   },

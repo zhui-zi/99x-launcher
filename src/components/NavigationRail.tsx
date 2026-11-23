@@ -6,7 +6,8 @@ import {
   HardDrive,
   BarChart3,
   Settings,
-  ExternalLink
+  ExternalLink,
+  Github
 } from 'lucide-react'
 import type { CommunityId } from '../types/server'
 
@@ -18,6 +19,8 @@ interface NavigationRailProps {
   activeCommunity: CommunityId
   autoJoinActive: boolean
   watchedCount: number
+  appVersion: string
+  hasUpdate: boolean
 }
 
 const TOP_ITEMS: Array<{ id: NavTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
@@ -39,7 +42,9 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
   onSelectTab,
   activeCommunity,
   autoJoinActive,
-  watchedCount
+  watchedCount,
+  appVersion,
+  hasUpdate
 }) => {
   const portal = PORTALS[activeCommunity]
 
@@ -78,6 +83,9 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
             {watchedCount}
           </span>
         )}
+        {item.id === 'settings' && hasUpdate && (
+          <span className="w-2 h-2 rounded-full bg-[#0067C0] dark:bg-[#60CDFF]" title="发现新版本" />
+        )}
       </button>
     )
   }
@@ -89,11 +97,22 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
       <div className="space-y-1 pt-2 border-t border-black/[0.06] dark:border-white/[0.07]">
         <button
           onClick={() => window.cs2Api?.shell.openExternal(portal.url)}
-          className="w-full h-9 px-3 rounded-md flex items-center gap-3 text-[12.5px] text-[#5D5D5D] dark:text-[#A0A0A0] hover:bg-black/[0.04] dark:hover:bg-white/[0.04] transition-colors"
+          className="w-full h-8 px-3 rounded-md flex items-center gap-3 text-[12px] text-[#5D5D5D] dark:text-[#A0A0A0] hover:bg-black/[0.04] dark:hover:bg-white/[0.04] transition-colors"
           title={portal.url}
         >
-          <ExternalLink className="w-4 h-4 shrink-0" />
+          <ExternalLink className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">{portal.label}</span>
+        </button>
+        <button
+          onClick={() => window.cs2Api?.shell.openExternal('https://github.com/zhui-zi/99x-launcher')}
+          className="w-full h-8 px-3 rounded-md flex items-center justify-between text-[12px] text-[#5D5D5D] dark:text-[#A0A0A0] hover:bg-black/[0.04] dark:hover:bg-white/[0.04] transition-colors"
+          title="打开 GitHub 仓库 (github.com/zhui-zi/99x-launcher)"
+        >
+          <span className="inline-flex items-center gap-3 truncate">
+            <Github className="w-3.5 h-3.5 shrink-0" />
+            <span>GitHub</span>
+          </span>
+          <span className="text-[10.5px] font-mono opacity-75">v{appVersion}</span>
         </button>
         {renderItem({ id: 'settings', label: '设置', icon: Settings })}
       </div>

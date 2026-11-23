@@ -23,6 +23,7 @@ import { startAutoJoin, stopAutoJoin, type AutoJoinOptions } from './services/au
 import { connectToServer, detectGamePaths, isCs2Running } from './services/gameLauncher'
 import { deleteMapFiles, scanCs2MapFiles } from './services/mapCleaner'
 import { listCfgFiles, readCfgFile, writeCfgFile } from './services/cfgManager'
+import { checkForUpdates, getAppVersion } from './services/updater'
 import { loadPersistedData, savePersistedData, type PersistedData } from './services/storage'
 
 let mainWindow: BrowserWindow | null = null
@@ -237,6 +238,10 @@ function registerIpcHandlers() {
   ipcMain.handle('cfg:write', (_, cs2Path: string, fileName: string, content: string) =>
     writeCfgFile(cs2Path, fileName, content)
   )
+
+  // App Version & Update Checker
+  ipcMain.handle('app:getVersion', () => getAppVersion())
+  ipcMain.handle('app:checkUpdate', () => checkForUpdates())
 
   // External links & Notifications
   ipcMain.handle('shell:openExternal', (_, url: string) => shell.openExternal(url))

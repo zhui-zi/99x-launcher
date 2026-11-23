@@ -173,6 +173,17 @@ export interface CfgFileInfo {
   mtimeMs: number
 }
 
+export interface UpdateCheckResult {
+  currentVersion: string
+  latestVersion: string
+  hasUpdate: boolean
+  releaseUrl: string
+  downloadUrl: string
+  releaseNotes: string
+  publishedAt: string
+  error?: string
+}
+
 export interface Cs2Api {
   window: {
     minimize: () => Promise<void>
@@ -247,6 +258,10 @@ export interface Cs2Api {
       filePath?: string
       error?: string
     }>
+  }
+  app: {
+    getVersion: () => Promise<string>
+    checkUpdate: () => Promise<UpdateCheckResult>
   }
   shell: {
     openExternal: (url: string) => Promise<void>

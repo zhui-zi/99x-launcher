@@ -9,13 +9,21 @@ import {
   Moon,
   Monitor,
   Power,
-  Minimize2
+  Minimize2,
+  Github,
+  RefreshCw,
+  Download,
+  ExternalLink
 } from 'lucide-react'
-import type { LauncherSettings, ThemeMode } from '../types/server'
+import type { LauncherSettings, ThemeMode, UpdateCheckResult } from '../types/server'
 import { playSuccessSound } from '../utils/sound'
 
 interface SettingsViewProps {
   settings: LauncherSettings
+  appVersion: string
+  updateInfo: UpdateCheckResult | null
+  checkingUpdate: boolean
+  onCheckUpdate: () => Promise<void>
   onChange: (patch: Partial<LauncherSettings>) => void
   onAutoDetectPaths: () => Promise<void>
   onImportExgJson: () => Promise<number>
@@ -23,6 +31,10 @@ interface SettingsViewProps {
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
+  appVersion,
+  updateInfo,
+  checkingUpdate,
+  onCheckUpdate,
   onChange,
   onAutoDetectPaths,
   onImportExgJson
@@ -326,6 +338,81 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <Upload className="w-3.5 h-3.5" /> 导入 EXG 小助手 server.json
           </button>
         </div>
+      </section>
+
+      {/* About & Version Update */}
+      <section className="fluent-card divide-y divide-black/[0.06] dark:divide-white/[0.07]">
+        <div className="p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[14px] font-semibold">99x launcher</span>
+              <span className="text-[11.5px] font-mono px-2 py-0.5 rounded bg-[#0067C0]/10 text-[#0067C0] dark:bg-[#60CDFF]/15 dark:text-[#60CDFF]">
+                v{appVersion}
+              </span>
+            </div>
+            <div className="text-[12px] text-[#5D5D5D] dark:text-[#A0A0A0] mt-0.5">
+              WinUI 3 & Fluent 2 风格 CS2 社区服登录器（EXG / ZED / FYS）
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => window.cs2Api?.shell.openExternal('https://github.com/zhui-zi/99x-launcher')}
+              className="h-8 px-3 fluent-btn-standard text-[12px] inline-flex items-center gap-1.5"
+            >
+              <Github className="w-3.5 h-3.5" /> GitHub 仓库
+            </button>
+            <button
+              onClick={onCheckUpdate}
+              disabled={checkingUpdate}
+              className="h-8 px-3.5 fluent-btn-accent text-[12px] inline-flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${checkingUpdate ? 'animate-spin' : ''}`} />
+              {checkingUpdate ? '检查中...' : '检查更新'}
+            </button>
+          </div>
+        </div>
+
+        {updateInfo && (
+          <div className="p-4 flex flex-wrap items-center justify-between gap-3 text-[12.5px]">
+            {updateInfo.error ? (
+              <span className="text-[#9D5D00] dark:text-[#FCE100]">
+                检查更新失败：{updateInfo.error}
+              </span>
+            ) : updateInfo.hasUpdate ? (
+              <>
+                <div>
+                  <div className="font-medium text-[#0067C0] dark:text-[#60CDFF]">
+                    发现新版本 v{updateInfo.latestVersion}（当前 v{updateInfo.currentVersion}）
+                  </div>
+                  {updateInfo.releaseNotes && (
+                    <div className="text-[11.5px] text-[#5D5D5D] dark:text-[#A0A0A0] mt-0.5 whitespace-pre-line">
+                      {updateInfo.releaseNotes}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => window.cs2Api?.shell.openExternal(updateInfo.downloadUrl)}
+                    className="h-8 px-3.5 fluent-btn-accent text-[12px] inline-flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" /> 下载最新版
+                  </button>
+                  <button
+                    onClick={() => window.cs2Api?.shell.openExternal(updateInfo.releaseUrl)}
+                    className="h-8 px-3 fluent-btn-standard text-[12px] inline-flex items-center gap-1.5"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> Release 页面
+                  </button>
+                </div>
+              </>
+            ) : (
+              <span className="text-[#0F7B0F] dark:text-[#6CCB5F]">
+                当前已是最新版本 (v{updateInfo.currentVersion})
+              </span>
+            )}
+          </div>
+        )}
       </section>
     </div>
   )

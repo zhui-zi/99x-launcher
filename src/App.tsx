@@ -10,7 +10,9 @@ import {
   Layers,
   CheckCircle2,
   Bell,
-  Globe
+  Globe,
+  Download,
+  X
 } from 'lucide-react'
 import type {
   AutoJoinState,
@@ -26,7 +28,8 @@ import type {
   ServerHistoryPoint,
   ServerItem,
   SortMode,
-  ThemeMode
+  ThemeMode,
+  UpdateCheckResult
 } from './types/server'
 import { DIFFICULTY_STYLES, groupServers, normalizeDifficulty } from './utils/grouping'
 import { playSuccessSound } from './utils/sound'
@@ -113,10 +116,14 @@ export function App() {
   const [onlyJoinable, setOnlyJoinable] = useState(false)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
 
-  // Modals / Drawers
+  // Modals / Drawers & Update
   const [inspectServerId, setInspectServerId] = useState<string | null>(null)
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [appVersion, setAppVersion] = useState('1.2.0')
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false)
 
   // Multi-server Auto-Join State
   const [autoJoin, setAutoJoin] = useState<AutoJoinState>({
@@ -199,14 +206,42 @@ export function App() {
     return () => media.removeEventListener('change', applyTheme)
   }, [settings.theme])
 
-  // Load persisted config + detect CS2 paths
+  const handleCheckUpdate = useCallback(async (silent = false) => {
+    if (!window.cs2Api) return
+    setCheckingUpdate(true)
+    try {
+      const res = await window.cs2Api.app.checkUpdate()
+      setUpdateInfo(res)
+      if (res.hasUpdate) {
+        setUpdateBannerDismissed(false)
+        if (!silent) {
+          showToast(`发现新版本 v${res.latestVersion}！`)
+        } else if (settingsRef.current.desktopNotification) {
+          window.cs2Api.notify.show(
+            `99x launcher 发现新版本 v${res.latestVersion}`,
+            `当前版本 v${res.currentVersion}，点击设置或顶栏即可前往下载更新`
+          )
+        }
+      } else if (!silent) {
+        showToast(res.error ? `检查更新失败：${res.error}` : `当前已是最新版本 (v${res.currentVersion})`)
+      }
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }, [showToast])
+
+  // Load persisted config + detect CS2 paths + check updates on startup
   useEffect(() => {
     const init = async () => {
       if (!window.cs2Api) {
         setDataLoaded(true)
         return
       }
-      const persisted = await window.cs2Api.storage.load()
+      const [persisted, ver] = await Promise.all([
+        window.cs2Api.storage.load(),
+        window.cs2Api.app.getVersion()
+      ])
+      if (ver) setAppVersion(ver)
       let mergedSettings = { ...DEFAULT_SETTINGS, ...(persisted?.settings || {}) }
       if (!mergedSettings.cs2Path || !mergedSettings.steamPath) {
         const detected = await window.cs2Api.game.detectPaths()
@@ -241,9 +276,11 @@ export function App() {
         zed: zedPre?.servers || [],
         fys: fysPre?.servers || []
       })
+      // Non-blocking startup update check
+      handleCheckUpdate(true)
     }
     init()
-  }, [])
+  }, [handleCheckUpdate])
 
   // Persist changes
   useEffect(() => {
@@ -826,10 +863,44 @@ export function App() {
           activeCommunity={settings.activeCommunity}
           autoJoinActive={hasAutoJoinActive}
           watchedCount={watchedServerIds.length + watchedMapKeywords.length}
+          appVersion={appVersion}
+          hasUpdate={Boolean(updateInfo?.hasUpdate)}
         />
 
         {/* WinUI 3 Rounded Content Surface */}
         <main className="flex-1 overflow-y-auto bg-[#F9F9F9] dark:bg-[#272727] rounded-tl-lg border-t border-l border-black/[0.05] dark:border-white/[0.06] relative">
+          {/* WinUI 3 Update InfoBar */}
+          {updateInfo?.hasUpdate && !updateBannerDismissed && (
+            <div className="mx-5 mt-4 rounded-lg bg-[#0067C0]/10 dark:bg-[#60CDFF]/15 border border-[#0067C0]/30 dark:border-[#60CDFF]/30 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-[12.5px]">
+              <div className="flex items-center gap-2 text-[#004E8C] dark:text-[#A8E3FF]">
+                <Download className="w-4 h-4 shrink-0" />
+                <span>
+                  发现新版本 <strong>v{updateInfo.latestVersion}</strong>（当前 v{updateInfo.currentVersion}），推荐更新体验最新功能
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => window.cs2Api?.shell.openExternal(updateInfo.downloadUrl)}
+                  className="h-7 px-3 fluent-btn-accent text-[12px] inline-flex items-center gap-1"
+                >
+                  <Download className="w-3 h-3" /> 下载更新
+                </button>
+                <button
+                  onClick={() => window.cs2Api?.shell.openExternal(updateInfo.releaseUrl)}
+                  className="h-7 px-2.5 fluent-btn-standard text-[12px]"
+                >
+                  更新日志
+                </button>
+                <button
+                  onClick={() => setUpdateBannerDismissed(true)}
+                  className="w-6 h-6 rounded hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center text-[#5D5D5D] dark:text-[#B0B0B0]"
+                  title="暂不提醒"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
           {activeTab === 'servers' && (
             <div className={`p-5 space-y-4 max-w-[1440px] mx-auto ${hasAutoJoinActive ? 'pb-28' : 'pb-10'}`}>
               {/* Community Switcher (WinUI 3 Pivot / Segmented Control) */}
@@ -1146,6 +1217,10 @@ export function App() {
           {activeTab === 'settings' && (
             <SettingsView
               settings={settings}
+              appVersion={appVersion}
+              updateInfo={updateInfo}
+              checkingUpdate={checkingUpdate}
+              onCheckUpdate={() => handleCheckUpdate(false)}
               onChange={handlePatchSettings}
               onAutoDetectPaths={async () => {
                 if (!window.cs2Api) return
