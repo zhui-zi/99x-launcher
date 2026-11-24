@@ -32,6 +32,7 @@ import type {
   UpdateCheckResult
 } from './types/server'
 import { DIFFICULTY_STYLES, groupServers, normalizeDifficulty } from './utils/grouping'
+import { buildMapLookupIndex, resolveMapMeta } from './utils/mapResolver'
 import { playSuccessSound } from './utils/sound'
 import { TitleBar } from './components/TitleBar'
 import { NavigationRail, type NavTab } from './components/NavigationRail'
@@ -454,6 +455,16 @@ export function App() {
     }
   }, [showToast, recordMapPlay])
 
+  // Unified map metadata index (EXG mapLists + cross-community live data + built-in fallback)
+  const mapLookupIndex = useMemo(() => {
+    const allLive = [
+      ...(communityCache.exg || []),
+      ...(communityCache.zed || []),
+      ...(communityCache.fys || [])
+    ]
+    return buildMapLookupIndex(mapDict, allLive)
+  }, [mapDict, communityCache])
+
   // Merge active community + matching custom servers + live A2S data
   const allServers: ServerItem[] = useMemo(() => {
     const items: ServerItem[] = []
@@ -465,10 +476,11 @@ export function App() {
       const addr = `${raw.ip}:${raw.port}`
       const a2s = a2sCache[addr]
       const mapName = (a2s?.online && a2s.map) || raw.map || ''
-      const dictEntry = mapDict[mapName.toLowerCase()]
-      const mapDisplayName = raw.mapDisplayName || dictEntry?.mapNameCN || ''
-      const mapDifficulty: DifficultyLevel = normalizeDifficulty(
-        raw.mapDifficulty || dictEntry?.difficulty
+      const { mapDisplayName, mapDifficulty } = resolveMapMeta(
+        mapName,
+        raw.mapDisplayName,
+        raw.mapDifficulty,
+        mapLookupIndex
       )
 
       items.push({
@@ -504,7 +516,12 @@ export function App() {
       const addr = `${c.ip}:${c.port}`
       const a2s = a2sCache[addr]
       const mapName = a2s?.online ? a2s.map || '' : ''
-      const dictEntry = mapDict[mapName.toLowerCase()]
+      const { mapDisplayName, mapDifficulty } = resolveMapMeta(
+        mapName,
+        undefined,
+        undefined,
+        mapLookupIndex
+      )
       items.push({
         id: c.id,
         community: c.community,
@@ -523,8 +540,8 @@ export function App() {
         maxPlayers: a2s?.online ? a2s.maxPlayers ?? 0 : 0,
         bots: a2s?.online ? a2s.bots ?? 0 : 0,
         map: mapName,
-        mapDisplayName: dictEntry?.mapNameCN || '',
-        mapDifficulty: normalizeDifficulty(dictEntry?.difficulty),
+        mapDisplayName,
+        mapDifficulty,
         mapWorkshopId: 0,
         ping: a2s?.online ? a2s.ping : -1,
         vac: a2s?.vac,
@@ -534,7 +551,7 @@ export function App() {
     }
 
     return items
-  }, [communityCache, customServers, a2sCache, mapDict, settings.activeCommunity])
+  }, [communityCache, customServers, a2sCache, mapLookupIndex, settings.activeCommunity])
 
   // Map-change monitor + Per-server historical player sampling (every 60s)
   useEffect(() => {

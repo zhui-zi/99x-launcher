@@ -10,6 +10,7 @@ import {
   FileArchive
 } from 'lucide-react'
 import type { MapFileEntry, MapScanResult } from '../types/server'
+import { buildMapLookupIndex, resolveMapMeta } from '../utils/mapResolver'
 
 interface MapCleanerViewProps {
   cs2Path: string
@@ -68,12 +69,14 @@ export const MapCleanerView: React.FC<MapCleanerViewProps> = ({
     if (cs2Path) runScan()
   }, [cs2Path])
 
+  const mapLookupIndex = useMemo(() => buildMapLookupIndex(mapDict), [mapDict])
+
   const filteredEntries = useMemo(() => {
     const list = scan?.entries || []
     const q = search.trim().toLowerCase()
     const filtered = q
       ? list.filter((e) => {
-          const cn = mapDict[e.name.toLowerCase()]?.mapNameCN || ''
+          const cn = resolveMapMeta(e.name, undefined, undefined, mapLookupIndex).mapDisplayName
           return (
             e.name.toLowerCase().includes(q) ||
             (e.workshopId || '').includes(q) ||
@@ -87,7 +90,7 @@ export const MapCleanerView: React.FC<MapCleanerViewProps> = ({
     else if (sortBy === 'date_asc') sorted.sort((a, b) => a.mtimeMs - b.mtimeMs)
     else sorted.sort((a, b) => a.name.localeCompare(b.name))
     return sorted
-  }, [scan, search, sortBy, mapDict])
+  }, [scan, search, sortBy, mapLookupIndex])
 
   const selectedBytes = useMemo(() => {
     let total = 0
@@ -327,7 +330,7 @@ export const MapCleanerView: React.FC<MapCleanerViewProps> = ({
               <tbody className="divide-y divide-[#F1F3F4] dark:divide-[#2D2E30] text-[12.5px]">
                 {filteredEntries.map((item) => {
                   const checked = selectedPaths.has(item.filePath)
-                  const cn = mapDict[item.name.toLowerCase()]?.mapNameCN
+                  const cn = resolveMapMeta(item.name, undefined, undefined, mapLookupIndex).mapDisplayName
                   return (
                     <tr
                       key={item.id}
