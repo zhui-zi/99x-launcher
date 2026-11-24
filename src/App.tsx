@@ -1175,6 +1175,7 @@ export function App() {
           {activeTab === 'cfg' && (
             <CfgManagerView
               cs2Path={settings.cs2Path}
+              activeCommunity={settings.activeCommunity}
               onPickCs2Path={async () => {
                 const dir = await window.cs2Api?.game.pickDirectory(
                   '选择 Counter-Strike Global Offensive 安装目录'
