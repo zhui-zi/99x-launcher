@@ -37,6 +37,10 @@ npm run dev        # Development mode
 npm run pack:exe   # Build single portable release/99x-launcher.exe
 ```
 
+### License
+
+Licensed under the [MIT License](LICENSE).
+
 ---
 
 ## 简体中文

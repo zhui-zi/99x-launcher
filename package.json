@@ -2,6 +2,7 @@
   "name": "99x-launcher",
   "version": "1.3.2",
   "description": "99x launcher — WinUI 3 & Fluent 2 CS2 Community Server Launcher (EXG / ZED / FYS)",
+  "license": "MIT",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && npm run build:electron && electron . --dev\"",
