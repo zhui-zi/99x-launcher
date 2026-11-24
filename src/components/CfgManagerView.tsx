@@ -289,7 +289,7 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
   return (
     <div className="p-6 space-y-5 max-w-[1440px] mx-auto pb-16">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="space-y-3">
         <div>
           <h1 className="text-[22px] font-semibold tracking-tight text-[#1A1A1A] dark:text-[#F3F3F3]">
             CFG 配置与社区指令绑定
@@ -306,15 +306,15 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleInsertBundle}
-            className="h-8 px-3.5 fluent-btn-standard text-[12.5px] inline-flex items-center gap-1.5"
+            className="h-8 px-3.5 fluent-btn-standard text-[12.5px] inline-flex items-center gap-1.5 whitespace-nowrap"
           >
             <Sparkles className="w-3.5 h-3.5 text-[#0067C0] dark:text-[#60CDFF]" />
-            {profile === 'fys' ? '一键生成 FYS 风云社 ZE 套装' : '一键生成 EXG 推荐配置'}
+            {profile === 'fys' ? '一键生成 FYS 推荐配置' : '一键生成 EXG 推荐配置'}
           </button>
           {cfgDir && (
             <button
               onClick={() => window.cs2Api?.maps.openFolder(cfgDir)}
-              className="h-8 px-3 fluent-btn-standard text-[12.5px] inline-flex items-center gap-1.5"
+              className="h-8 px-3 fluent-btn-standard text-[12.5px] inline-flex items-center gap-1.5 whitespace-nowrap"
             >
               <FolderOpen className="w-3.5 h-3.5" /> 打开 cfg 目录
             </button>
@@ -322,7 +322,7 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
           <button
             onClick={handleSave}
             disabled={saving || !cs2Path}
-            className="h-8 px-4 fluent-btn-accent text-[12.5px] inline-flex items-center gap-1.5 disabled:opacity-40"
+            className="h-8 px-4 fluent-btn-accent text-[12.5px] inline-flex items-center gap-1.5 whitespace-nowrap disabled:opacity-40"
           >
             <Save className="w-3.5 h-3.5" /> {saving ? '保存中...' : `保存 ${activeFile}`}
           </button>
