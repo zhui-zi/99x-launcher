@@ -17,6 +17,8 @@ import {
   Trash2,
   Blocks,
   Code2,
+  Smile,
+  Pencil,
   X
 } from 'lucide-react'
 import type { CfgFileInfo, CommunityId } from '../types/server'
@@ -27,10 +29,14 @@ import {
   mouseButtonToCs2Key
 } from '../utils/cs2Keys'
 import {
+  KAOMOJI_CUSTOM_PREFIX,
   analyzeCfgContent,
+  createCustomKaomojiPreset,
   removeLineRangeFromCfg,
+  sanitizeCs2SayText,
   upsertModuleInCfg,
-  type InstalledCfgModule
+  type InstalledCfgModule,
+  type KaomojiChatChannel
 } from '../utils/cfgModules'
 import {
   CFG_PRESETS,
@@ -107,6 +113,8 @@ const EXG_BUNDLE_IDS = [
   'common_fps'
 ]
 
+const CUSTOM_KAOMOJI_CAPTURE_ID = '__custom_kaomoji__'
+
 export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
   cs2Path,
   steamPath,
@@ -141,6 +149,9 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
     field: 'key' | 'param'
     autoUpdate?: boolean
   } | null>(null)
+  const [customKaomojiText, setCustomKaomojiText] = useState('')
+  const [customKaomojiKey, setCustomKaomojiKey] = useState('')
+  const [customKaomojiChannel, setCustomKaomojiChannel] = useState<KaomojiChatChannel>('say')
 
   const isDirty = content !== savedContent
 
@@ -203,9 +214,20 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
     })
   }, [steamPath])
 
+  const installedCustomKaomojiPresets = useMemo(
+    () =>
+      installedModules
+        .filter((m) => m.presetId.startsWith(KAOMOJI_CUSTOM_PREFIX))
+        .map((m) => m.preset),
+    [installedModules]
+  )
+
   const profilePool = useMemo(
-    () => CFG_PRESETS.filter((p) => p.profile === profile || p.profile === 'common'),
-    [profile]
+    () => [
+      ...installedCustomKaomojiPresets,
+      ...CFG_PRESETS.filter((p) => p.profile === profile || p.profile === 'common')
+    ],
+    [profile, installedCustomKaomojiPresets]
   )
 
   const installedCountInProfile = useMemo(
@@ -299,6 +321,7 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
     setStatusMsg(null)
     setConfirmDeleteFile(false)
     setKeyMap({})
+    setCustomKaomojiKey('')
     const res = await window.cs2Api.cfg.read(cs2Path, fileName)
     if (res.exists) {
       setContent(res.content)
@@ -429,6 +452,59 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
     })
   }
 
+  const handleAddCustomKaomoji = () => {
+    const { text, sanitized } = sanitizeCs2SayText(customKaomojiText)
+    if (!text) {
+      setStatusMsg({
+        type: 'error',
+        text: '请先输入或粘贴想要绑定的颜文字表情内容'
+      })
+      return
+    }
+
+    const key = customKaomojiKey.trim()
+    if (!key) {
+      setStatusMsg({
+        type: 'error',
+        text: `请先按下要为颜文字「${text}」绑定的按键`
+      })
+      setCapturingTarget({ presetId: CUSTOM_KAOMOJI_CAPTURE_ID, field: 'key' })
+      return
+    }
+
+    const preset = createCustomKaomojiPreset(text, customKaomojiChannel)
+    const body = `bind "${key}" "${preset.command}"`
+
+    const lowerKey = key.toLowerCase()
+    const existingBind = existingBinds.get(lowerKey)
+    const cs2Conflict = getCs2Conflict(key, preset.command)
+
+    setContent((prev) => upsertModuleInCfg(prev, preset, body, undefined, key))
+    setCustomKaomojiText('')
+    setCustomKaomojiKey('')
+
+    const warnings: string[] = []
+    if (existingBind) {
+      warnings.push(`当前 CFG 中「${key}」原绑定为 "${existingBind.command}"`)
+    }
+    if (cs2Conflict) {
+      warnings.push(`CS2 原绑定为「${formatCs2CommandLabel(cs2Conflict)}」`)
+    }
+    const sanitizeNote = sanitized ? '（已自动将英文引号/分号转义防止 CS2 断句）' : ''
+
+    if (warnings.length > 0) {
+      setStatusMsg({
+        type: 'warn',
+        text: `已添加自定义颜文字「${text} (${key})」${sanitizeNote}，但注意重复按键：${warnings.join('；')}`
+      })
+    } else {
+      setStatusMsg({
+        type: 'success',
+        text: `已添加自定义颜文字「${text} (${key})」${sanitizeNote}，按 Ctrl+S 保存生效`
+      })
+    }
+  }
+
   const handleRemoveManualLine = (lineIndex: number, label: string) => {
     setContent((prev) => removeLineRangeFromCfg(prev, lineIndex, lineIndex))
     setStatusMsg({
@@ -537,7 +613,38 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
     if (!capturingTarget) return
 
     const commitKey = (cs2Key: string) => {
-      const targetPreset = CFG_PRESETS.find((p) => p.id === capturingTarget.presetId)
+      if (capturingTarget.presetId === CUSTOM_KAOMOJI_CAPTURE_ID) {
+        setCustomKaomojiKey(cs2Key)
+        setCapturingTarget(null)
+        const lower = cs2Key.toLowerCase()
+        const cfgExisting = existingBinds.get(lower)
+        const cs2Conflict = getCs2Conflict(cs2Key)
+        const reasons: string[] = []
+        if (cfgExisting) {
+          reasons.push(`当前 CFG 已绑定为「${cfgExisting.command}」`)
+        }
+        if (cs2Conflict) {
+          reasons.push(
+            `CS2 ${cs2KeysLoaded ? '本地键位' : '默认键位'}已绑定为「${formatCs2CommandLabel(cs2Conflict)}」`
+          )
+        }
+        if (reasons.length > 0) {
+          setStatusMsg({
+            type: 'warn',
+            text: `重复按键提醒：按键「${cs2Key}」${reasons.join('，且')}，建议换一个空闲按键避免冲突`
+          })
+        } else {
+          setStatusMsg({
+            type: 'success',
+            text: `已为自定义颜文字录制按键「${cs2Key}」（无冲突）`
+          })
+        }
+        return
+      }
+
+      const targetPreset =
+        CFG_PRESETS.find((p) => p.id === capturingTarget.presetId) ??
+        installedByPresetId.get(capturingTarget.presetId)?.preset
       if (capturingTarget.field === 'key') {
         setKeyMap((prev) => ({ ...prev, [capturingTarget.presetId]: cs2Key }))
       } else {
@@ -815,8 +922,8 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={
                   profile === 'fys'
-                    ? '搜索风云社指令，如 .hide、.nade、.bizon、血针、魔兽...'
-                    : '搜索 EXG 指令，如 tp、.bet、.hide、越肩、灵魂出窍、泛光、切T...'
+                    ? '搜索风云社指令或颜文字，如 .hide、.nade、血针、掀桌、摊手...'
+                    : '搜索 EXG 指令或颜文字，如 tp、.bet、.hide、越肩、掀桌、摊手...'
                 }
                 className="w-full h-8 pl-8 pr-7 fluent-input text-[12px]"
               />
@@ -885,6 +992,131 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
               })}
             </div>
           )}
+
+          {/* Custom Kaomoji Builder (shown inside 颜文字表情 category) */}
+          {activeCategory === '颜文字表情' && !searchQuery.trim() && installFilter !== 'installed' && (() => {
+            const isCapturingCustom = capturingTarget?.presetId === CUSTOM_KAOMOJI_CAPTURE_ID
+            const customCfgExisting = customKaomojiKey
+              ? existingBinds.get(customKaomojiKey.toLowerCase())
+              : undefined
+            const customCs2Conflict = customKaomojiKey ? getCs2Conflict(customKaomojiKey) : null
+            return (
+              <div className="rounded-md p-3 bg-[#0067C0]/[0.04] dark:bg-[#60CDFF]/[0.06] border border-[#0067C0]/20 dark:border-[#60CDFF]/20 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[#1A1A1A] dark:text-[#F3F3F3]">
+                    <Smile className="w-3.5 h-3.5 text-[#0067C0] dark:text-[#60CDFF]" />
+                    <span>自定义颜文字表情</span>
+                  </div>
+                  <div className="inline-flex rounded-md p-0.5 bg-black/[0.05] dark:bg-white/[0.08] text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setCustomKaomojiChannel('say')}
+                      className={`px-2 py-0.5 rounded transition-colors ${
+                        customKaomojiChannel === 'say'
+                          ? 'bg-white dark:bg-[#2C2C2C] text-[#0067C0] dark:text-[#60CDFF] font-medium shadow-sm'
+                          : 'text-[#5D5D5D] dark:text-[#A0A0A0]'
+                      }`}
+                    >
+                      全局 say
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomKaomojiChannel('say_team')}
+                      className={`px-2 py-0.5 rounded transition-colors ${
+                        customKaomojiChannel === 'say_team'
+                          ? 'bg-white dark:bg-[#2C2C2C] text-[#0067C0] dark:text-[#60CDFF] font-medium shadow-sm'
+                          : 'text-[#5D5D5D] dark:text-[#A0A0A0]'
+                      }`}
+                    >
+                      队内 say_team
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={customKaomojiText}
+                    onChange={(e) => setCustomKaomojiText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAddCustomKaomoji()
+                    }}
+                    placeholder="输入或粘贴颜文字，如 (╯°□°）╯︵ ┻━┻ 或 ヾ(≧▽≦*)o"
+                    className="flex-1 min-w-[180px] h-7 px-2.5 fluent-input text-[12px]"
+                  />
+
+                  <div className="relative flex items-center">
+                    <button
+                      type="button"
+                      data-keybind-capture={`${CUSTOM_KAOMOJI_CAPTURE_ID}:key`}
+                      onClick={() =>
+                        setCapturingTarget(
+                          isCapturingCustom
+                            ? null
+                            : { presetId: CUSTOM_KAOMOJI_CAPTURE_ID, field: 'key' }
+                        )
+                      }
+                      className={`min-w-[74px] h-7 px-2 rounded-md border font-mono text-[11.5px] transition-colors flex items-center justify-center ${
+                        isCapturingCustom
+                          ? 'border-[#0067C0] dark:border-[#60CDFF] bg-[#0067C0]/10 dark:bg-[#60CDFF]/15 text-[#0067C0] dark:text-[#60CDFF] animate-pulse'
+                          : customKaomojiKey
+                            ? 'fluent-input text-[#1A1A1A] dark:text-[#F3F3F3] hover:border-[#0067C0]/60 dark:hover:border-[#60CDFF]/60 pr-5'
+                            : 'fluent-input text-[#5D5D5D] dark:text-[#8E8E8E] hover:border-[#0067C0]/60 dark:hover:border-[#60CDFF]/60'
+                      }`}
+                      title="点击后按下要绑定的按键（支持键盘、鼠标侧键/中键、滚轮）"
+                    >
+                      {isCapturingCustom ? '请按键...' : customKaomojiKey || '点击按键'}
+                    </button>
+                    {customKaomojiKey && !isCapturingCustom && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setCustomKaomojiKey('')
+                        }}
+                        className="absolute right-1 text-[#767676] hover:text-[#1A1A1A] dark:hover:text-[#F3F3F3] p-0.5"
+                        title="清除按键"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddCustomKaomoji}
+                    className="h-7 px-2.5 fluent-btn-accent text-[11.5px] inline-flex items-center gap-1 shrink-0"
+                  >
+                    <Plus className="w-3 h-3" /> 添加
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-1.5 text-[10.5px] text-[#5D5D5D] dark:text-[#A0A0A0]">
+                  <span>可添加多条自定义颜文字，自动转义英文分号与双引号防止 CS2 断句</span>
+                  <div className="flex flex-wrap items-center gap-1">
+                    {customCfgExisting && (
+                      <span
+                        className="px-1.5 py-0.5 rounded bg-[#9D5D00]/10 dark:bg-[#FCE100]/15 text-[#9D5D00] dark:text-[#FCE100] text-[10px] font-medium inline-flex items-center gap-0.5"
+                        title={`当前 CFG 中 ${customCfgExisting.key} 已绑定为 "${customCfgExisting.command}"`}
+                      >
+                        <AlertTriangle className="w-2.5 h-2.5" />
+                        CFG 冲突 ({customCfgExisting.key})
+                      </span>
+                    )}
+                    {customCs2Conflict && (
+                      <span
+                        className="px-1.5 py-0.5 rounded bg-[#C42B1C]/10 dark:bg-[#FF99A4]/15 text-[#C42B1C] dark:text-[#FF99A4] text-[10px] font-medium inline-flex items-center gap-0.5"
+                        title={`CS2 已将 ${customKaomojiKey} 绑定为「${formatCs2CommandLabel(customCs2Conflict)}」`}
+                      >
+                        <AlertTriangle className="w-2.5 h-2.5" />
+                        CS2 已绑: {formatCs2CommandLabel(customCs2Conflict)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
 
           {/* Preset List */}
           <div className="space-y-3 max-h-[540px] overflow-y-auto pr-1">
@@ -956,7 +1188,11 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                               <span className="text-[13px] font-medium text-[#1A1A1A] dark:text-[#F3F3F3]">
                                 {preset.label}
                               </span>
-                              <code className="px-1.5 py-0.5 rounded bg-black/[0.05] dark:bg-white/[0.08] font-mono text-[11px] text-[#0067C0] dark:text-[#60CDFF]">
+                              <code
+                                className={`px-1.5 py-0.5 rounded bg-black/[0.05] dark:bg-white/[0.08] ${
+                                  preset.category === '颜文字表情' ? 'font-sans text-[12px]' : 'font-mono text-[11px]'
+                                } text-[#0067C0] dark:text-[#60CDFF]`}
+                              >
                                 {preset.cmdDisplay}
                               </code>
                               {installedMod && (
@@ -997,6 +1233,22 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                           </div>
 
                           <div className="flex items-center gap-1.5 shrink-0">
+                            {preset.category === '颜文字表情' &&
+                              !preset.id.startsWith(KAOMOJI_CUSTOM_PREFIX) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveCategory('颜文字表情')
+                                    setSearchQuery('')
+                                    setInstallFilter('all')
+                                    setCustomKaomojiText(preset.cmdDisplay)
+                                  }}
+                                  className="w-7 h-7 fluent-btn-standard flex items-center justify-center text-[#5D5D5D] dark:text-[#A0A0A0]"
+                                  title="填入上方自定义框（可加台词或改为队内发送）"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                              )}
                             {!preset.isDirectCvar && (() => {
                               const isCapturingKey =
                                 capturingTarget?.presetId === preset.id &&
@@ -1350,7 +1602,11 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                             <span className="text-[12.5px] font-medium text-[#1A1A1A] dark:text-[#F3F3F3]">
                               {mod.preset.label}
                             </span>
-                            <code className="px-1.5 py-0.2 rounded bg-black/[0.05] dark:bg-white/[0.08] font-mono text-[10.5px] text-[#0067C0] dark:text-[#60CDFF]">
+                            <code
+                              className={`px-1.5 py-0.2 rounded bg-black/[0.05] dark:bg-white/[0.08] ${
+                                mod.preset.category === '颜文字表情' ? 'font-sans text-[11.5px]' : 'font-mono text-[10.5px]'
+                              } text-[#0067C0] dark:text-[#60CDFF]`}
+                            >
                               {mod.preset.cmdDisplay}
                             </code>
                             {mod.boundParam && (

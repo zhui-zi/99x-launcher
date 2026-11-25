@@ -35,6 +35,59 @@ const BIND_RE = /^\s*bind\s+"?([^"\s]+)"?\s+(?:"([^"]*)"|(\S+))/i
 const BLOCK_START_RE = /^\s*\/\/\s*>>>\s*\[99x:([^\]]+)\](.*)$/
 const BLOCK_END_RE = /^\s*\/\/\s*<<<\s*\[99x:([^\]]+)\]\s*$/
 
+export const KAOMOJI_CUSTOM_PREFIX = 'kaomoji_custom_'
+export type KaomojiChatChannel = 'say' | 'say_team'
+
+/** Sanitize kaomoji / chat text so CS2 Source 2 bind quotes and semicolon command separators never break. */
+export function sanitizeCs2SayText(raw: string): { text: string; sanitized: boolean } {
+  const normalized = raw.replace(/[\r\n\t]+/g, ' ').trim()
+  const cleaned = normalized.replace(/"/g, "'").replace(/;/g, '；')
+  return {
+    text: cleaned,
+    sanitized: cleaned !== normalized
+  }
+}
+
+export function createCustomKaomojiPreset(
+  kaomojiText: string,
+  channel: KaomojiChatChannel = 'say',
+  id?: string
+): CfgCmdPreset {
+  const finalId =
+    id ||
+    `${KAOMOJI_CUSTOM_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+  const isTeam = channel === 'say_team'
+  return {
+    id: finalId,
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '自定义颜文字',
+    label: isTeam ? '队内颜文字' : '自定义颜文字',
+    cmdDisplay: kaomojiText,
+    desc: isTeam ? '队内聊天 (say_team) 发送自定义颜文字表情' : '全局聊天 (say) 发送自定义颜文字表情',
+    defaultKey: '',
+    command: `${channel} ${kaomojiText}`
+  }
+}
+
+function buildCustomKaomojiPresetFromBlock(
+  presetId: string,
+  blockLines: string[]
+): CfgCmdPreset | undefined {
+  for (const line of blockLines) {
+    const t = line.trim()
+    if (!t || t.startsWith('//')) continue
+    const m = BIND_RE.exec(t)
+    if (!m) continue
+    const cmd = (m[2] !== undefined ? m[2] : m[3] || '').trim()
+    if (!cmd) continue
+    const isTeam = /^say_team\b/i.test(cmd)
+    const kaomojiText = cmd.replace(/^say(?:_team)?\s*/i, '').trim() || cmd
+    return createCustomKaomojiPreset(kaomojiText, isTeam ? 'say_team' : 'say', presetId)
+  }
+  return undefined
+}
+
 export function parseAllBinds(cfgText: string): {
   binds: Map<string, ParsedBind>
   allBindLines: ParsedBind[]
@@ -179,7 +232,7 @@ export function analyzeCfgContent(
     const startMatch = BLOCK_START_RE.exec(lines[i])
     if (!startMatch) continue
     const presetId = startMatch[1].trim()
-    const preset = presetById.get(presetId)
+    let preset = presetById.get(presetId)
     let endIdx = -1
     for (let j = i + 1; j < lines.length; j++) {
       const endMatch = BLOCK_END_RE.exec(lines[j])
@@ -188,6 +241,9 @@ export function analyzeCfgContent(
         break
       }
       if (BLOCK_START_RE.test(lines[j])) break
+    }
+    if (endIdx !== -1 && !preset && presetId.startsWith(KAOMOJI_CUSTOM_PREFIX)) {
+      preset = buildCustomKaomojiPresetFromBlock(presetId, lines.slice(i, endIdx + 1))
     }
     if (endIdx !== -1 && preset) {
       const blockLines = lines.slice(i, endIdx + 1)

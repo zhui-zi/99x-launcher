@@ -34,7 +34,8 @@ export const FYS_CATEGORIES = [
   'ZE 核心与指挥',
   '玩家通用指令',
   '全模式专有',
-  '游戏优化与操作'
+  '游戏优化与操作',
+  '颜文字表情'
 ] as const
 
 export const EXG_CATEGORIES = [
@@ -42,7 +43,8 @@ export const EXG_CATEGORIES = [
   'EXG ZE / ZM 与指挥',
   'EXG 快捷买枪与道具',
   'EXG 进阶视角与脚本',
-  '游戏优化与操作'
+  '游戏优化与操作',
+  '颜文字表情'
 ] as const
 
 export const FYS_REFERENCE_URL = 'https://bbs.fyscs.cn/t-162844-1.html'
@@ -2811,6 +2813,327 @@ export const CFG_PRESETS: CfgCmdPreset[] = [
     note: '附：jointeam 1 为观察者，jointeam 3 为 CT',
     defaultKey: '',
     command: 'jointeam 2'
+  },
+
+  // =========================================================================
+  // 跨社区通用 — 颜文字表情 (Kaomoji chat binds)
+  // =========================================================================
+  // 开心 / 卖萌
+  {
+    id: 'kaomoji_happy_wave',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '开心 / 卖萌',
+    label: '开心撒花',
+    cmdDisplay: 'ヾ(≧▽≦*)o',
+    desc: '全局聊天发送开心颜文字',
+    defaultKey: '',
+    command: 'say ヾ(≧▽≦*)o'
+  },
+  {
+    id: 'kaomoji_happy_cheers',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '开心 / 卖萌',
+    label: '超级开心',
+    cmdDisplay: '✧*｡٩(ˊᗜˋ*)و✧*｡',
+    desc: '全局聊天发送欢呼闪耀颜文字',
+    defaultKey: '',
+    command: 'say ✧*｡٩(ˊᗜˋ*)و✧*｡'
+  },
+  {
+    id: 'kaomoji_happy_smile',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '开心 / 卖萌',
+    label: '灿烂微笑',
+    cmdDisplay: '(*^▽^*)',
+    desc: '全局聊天发送微笑颜文字',
+    defaultKey: '',
+    command: 'say (*^▽^*)'
+  },
+  {
+    id: 'kaomoji_happy_love',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '开心 / 卖萌',
+    label: '比心打招呼',
+    cmdDisplay: '(｡･ω･｡)ﾉ♡',
+    desc: '全局聊天发送比心挥手颜文字',
+    defaultKey: '',
+    command: 'say (｡･ω･｡)ﾉ♡'
+  },
+  {
+    id: 'kaomoji_happy_smug',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '开心 / 卖萌',
+    label: '得意开心',
+    cmdDisplay: 'o(*￣▽￣*)ブ',
+    desc: '全局聊天发送得意卖萌颜文字',
+    defaultKey: '',
+    command: 'say o(*￣▽￣*)ブ'
+  },
+  {
+    id: 'kaomoji_happy_flower',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '开心 / 卖萌',
+    label: '撒花欢迎',
+    cmdDisplay: 'ヽ(✿ﾟ▽ﾟ)ノ',
+    desc: '全局聊天发送撒花颜文字',
+    defaultKey: '',
+    command: 'say ヽ(✿ﾟ▽ﾟ)ノ'
+  },
+
+  // 摊手 / 吃瓜 / 无奈
+  {
+    id: 'kaomoji_shrug',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '摊手 / 吃瓜 / 无奈',
+    label: '经典摊手',
+    cmdDisplay: '¯\\_(ツ)_/¯',
+    desc: '全局聊天发送无奈摊手颜文字',
+    defaultKey: '',
+    command: 'say ¯\\_(ツ)_/¯'
+  },
+  {
+    id: 'kaomoji_stare',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '摊手 / 吃瓜 / 无奈',
+    label: '呆萌围观',
+    cmdDisplay: '(´・ω・`)',
+    desc: '全局聊天发送吃瓜围观颜文字',
+    defaultKey: '',
+    command: 'say (´・ω・`)'
+  },
+  {
+    id: 'kaomoji_cheers_chill',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '摊手 / 吃瓜 / 无奈',
+    label: '微笑摸鱼',
+    cmdDisplay: '(￣▽￣)~*',
+    desc: '全局聊天发送轻松摸鱼颜文字',
+    defaultKey: '',
+    command: 'say (￣▽￣)~*'
+  },
+  {
+    id: 'kaomoji_question',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '摊手 / 吃瓜 / 无奈',
+    label: '满头问号',
+    cmdDisplay: '(⊙_⊙)?',
+    desc: '全局聊天发送疑惑震惊颜文字',
+    defaultKey: '',
+    command: 'say (⊙_⊙)?'
+  },
+  {
+    id: 'kaomoji_sideeye',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '摊手 / 吃瓜 / 无奈',
+    label: '无语斜眼',
+    cmdDisplay: '(¬_¬)',
+    desc: '全局聊天发送无语斜视颜文字',
+    defaultKey: '',
+    command: 'say (¬_¬)'
+  },
+  {
+    id: 'kaomoji_awkward',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '摊手 / 吃瓜 / 无奈',
+    label: '尴尬流汗',
+    cmdDisplay: '(-_-||)',
+    desc: '全局聊天发送黑线流汗颜文字',
+    defaultKey: '',
+    command: 'say (-_-||)'
+  },
+
+  // 掀桌 / 生气 / 吐槽
+  {
+    id: 'kaomoji_tableflip',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '掀桌 / 生气 / 吐槽',
+    label: '愤怒掀桌',
+    cmdDisplay: '(╯°□°）╯︵ ┻━┻',
+    desc: '全局聊天发送经典掀桌颜文字',
+    defaultKey: '',
+    command: 'say (╯°□°）╯︵ ┻━┻'
+  },
+  {
+    id: 'kaomoji_tableput',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '掀桌 / 生气 / 吐槽',
+    label: '冷静摆桌',
+    cmdDisplay: '┬─┬ノ( º _ ºノ)',
+    desc: '全局聊天发送把桌子放回去颜文字',
+    defaultKey: '',
+    command: 'say ┬─┬ノ( º _ ºノ)'
+  },
+  {
+    id: 'kaomoji_angry',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '掀桌 / 生气 / 吐槽',
+    label: '气急败坏',
+    cmdDisplay: '(╬▔皿▔)╯',
+    desc: '全局聊天发送生气吐槽颜文字',
+    defaultKey: '',
+    command: 'say (╬▔皿▔)╯'
+  },
+  {
+    id: 'kaomoji_rage',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '掀桌 / 生气 / 吐槽',
+    label: '怒吼抓狂',
+    cmdDisplay: 'ヽ(#`Д´)ﾉ',
+    desc: '全局聊天发送抓狂抗议颜文字',
+    defaultKey: '',
+    command: 'say ヽ(#`Д´)ﾉ'
+  },
+  {
+    id: 'kaomoji_glare',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '掀桌 / 生气 / 吐槽',
+    label: '凶狠盯视',
+    cmdDisplay: '(▼皿▼#)',
+    desc: '全局聊天发送凶狠表情',
+    defaultKey: '',
+    command: 'say (▼皿▼#)'
+  },
+
+  // 委屈 / 哭泣 / 躺平
+  {
+    id: 'kaomoji_cry',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '委屈 / 哭泣 / 躺平',
+    label: '委屈抹泪',
+    cmdDisplay: '(つД`)',
+    desc: '全局聊天发送委屈哭泣颜文字',
+    defaultKey: '',
+    command: 'say (つД`)'
+  },
+  {
+    id: 'kaomoji_tears',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '委屈 / 哭泣 / 躺平',
+    label: '泪流满面',
+    cmdDisplay: '╥﹏╥',
+    desc: '全局聊天发送大哭颜文字',
+    defaultKey: '',
+    command: 'say ╥﹏╥'
+  },
+  {
+    id: 'kaomoji_sorry',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '委屈 / 哭泣 / 躺平',
+    label: '抱歉擦汗',
+    cmdDisplay: '(；´д｀)ゞ',
+    desc: '全局聊天发送不好意思擦汗颜文字（已使用全角分号防断句）',
+    defaultKey: '',
+    command: 'say (；´д｀)ゞ'
+  },
+  {
+    id: 'kaomoji_dead',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '委屈 / 哭泣 / 躺平',
+    label: '倒地吐血',
+    cmdDisplay: '_(´ཀ`」 ∠)_',
+    desc: '全局聊天发送倒地寄了颜文字',
+    defaultKey: '',
+    command: 'say _(´ཀ`」 ∠)_'
+  },
+  {
+    id: 'kaomoji_orz',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '委屈 / 哭泣 / 躺平',
+    label: '五体投地',
+    cmdDisplay: 'orz',
+    desc: '全局聊天发送经典拜服 / 跪了颜文字',
+    defaultKey: '',
+    command: 'say orz'
+  },
+
+  // 加油 / 互动 / 整活
+  {
+    id: 'kaomoji_cheer',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '加油 / 互动 / 整活',
+    label: '加油冲鸭',
+    cmdDisplay: '(๑•̀ㅂ•́)و✧',
+    desc: '全局聊天发送加油打气颜文字',
+    defaultKey: '',
+    command: 'say (๑•̀ㅂ•́)و✧'
+  },
+  {
+    id: 'kaomoji_hug',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '加油 / 互动 / 整活',
+    label: '爱的抱抱',
+    cmdDisplay: '(づ｡◕‿‿◕｡)づ',
+    desc: '全局聊天发送求抱抱颜文字',
+    defaultKey: '',
+    command: 'say (づ｡◕‿‿◕｡)づ'
+  },
+  {
+    id: 'kaomoji_chill',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '加油 / 互动 / 整活',
+    label: '悠闲躺平',
+    cmdDisplay: '∠( ᐛ 」∠)＿',
+    desc: '全局聊天发送惬意躺平颜文字',
+    defaultKey: '',
+    command: 'say ∠( ᐛ 」∠)＿'
+  },
+  {
+    id: 'kaomoji_music',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '加油 / 互动 / 整活',
+    label: '哼歌开心',
+    cmdDisplay: '♪(´▽｀)',
+    desc: '全局聊天发送愉快哼歌颜文字',
+    defaultKey: '',
+    command: 'say ♪(´▽｀)'
+  },
+  {
+    id: 'kaomoji_point',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '加油 / 互动 / 整活',
+    label: '就是你了',
+    cmdDisplay: '(☞ﾟヮﾟ)☞',
+    desc: '全局聊天发送指向互动颜文字',
+    defaultKey: '',
+    command: 'say (☞ﾟヮﾟ)☞'
+  },
+  {
+    id: 'kaomoji_gg',
+    profile: 'common',
+    category: '颜文字表情',
+    subGroup: '加油 / 互动 / 整活',
+    label: '挥手 GG',
+    cmdDisplay: '( ^_^)／~~ GG',
+    desc: '全局聊天发送友好 GG 挥手颜文字',
+    defaultKey: '',
+    command: 'say ( ^_^)／~~ GG'
   }
 ]
 
