@@ -1192,6 +1192,7 @@ export function App() {
           {activeTab === 'cfg' && (
             <CfgManagerView
               cs2Path={settings.cs2Path}
+              steamPath={settings.steamPath}
               activeCommunity={settings.activeCommunity}
               onPickCs2Path={async () => {
                 const dir = await window.cs2Api?.game.pickDirectory(

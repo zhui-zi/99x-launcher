@@ -22,7 +22,7 @@ import {
 import { startAutoJoin, stopAutoJoin, type AutoJoinOptions } from './services/autoJoin'
 import { connectToServer, detectGamePaths, isCs2Running } from './services/gameLauncher'
 import { deleteMapFiles, scanCs2MapFiles } from './services/mapCleaner'
-import { listCfgFiles, readCfgFile, writeCfgFile } from './services/cfgManager'
+import { listCfgFiles, readCfgFile, readCs2UserKeys, writeCfgFile } from './services/cfgManager'
 import { checkForUpdates, getAppVersion } from './services/updater'
 import { loadPersistedData, savePersistedData, type PersistedData } from './services/storage'
 
@@ -238,6 +238,7 @@ function registerIpcHandlers() {
   ipcMain.handle('cfg:write', (_, cs2Path: string, fileName: string, content: string) =>
     writeCfgFile(cs2Path, fileName, content)
   )
+  ipcMain.handle('cfg:readCs2Keys', (_, steamPath: string) => readCs2UserKeys(steamPath))
 
   // App Version & Update Checker
   ipcMain.handle('app:getVersion', () => getAppVersion())
@@ -277,6 +278,10 @@ if (!gotLock) {
 app.on('before-quit', () => {
   isQuitting = true
   stopAutoJoin()
+  if (tray && !tray.isDestroyed()) {
+    tray.destroy()
+  }
+  tray = null
 })
 
 app.on('window-all-closed', () => {

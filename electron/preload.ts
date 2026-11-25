@@ -63,7 +63,8 @@ const api = {
     list: (cs2Path: string) => ipcRenderer.invoke('cfg:list', cs2Path),
     read: (cs2Path: string, fileName: string) => ipcRenderer.invoke('cfg:read', cs2Path, fileName),
     write: (cs2Path: string, fileName: string, content: string) =>
-      ipcRenderer.invoke('cfg:write', cs2Path, fileName, content)
+      ipcRenderer.invoke('cfg:write', cs2Path, fileName, content),
+    readCs2Keys: (steamPath: string) => ipcRenderer.invoke('cfg:readCs2Keys', steamPath)
   },
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),

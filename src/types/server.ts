@@ -258,6 +258,11 @@ export interface Cs2Api {
       filePath?: string
       error?: string
     }>
+    readCs2Keys: (steamPath: string) => Promise<{
+      found: boolean
+      filePath: string
+      bindings: Record<string, string>
+    }>
   }
   app: {
     getVersion: () => Promise<string>

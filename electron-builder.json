@@ -28,6 +28,7 @@
     ]
   },
   "portable": {
-    "artifactName": "99x-launcher.exe"
+    "artifactName": "99x-launcher.exe",
+    "unpackDirName": "99x-launcher"
   }
 }
