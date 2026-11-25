@@ -2772,10 +2772,10 @@ export const CFG_PRESETS: CfgCmdPreset[] = [
     profile: 'common',
     category: '游戏优化与操作',
     label: 'FPS 上限与网络优化',
-    cmdDisplay: 'fps_max 0 / rate',
-    desc: 'fps_max 0 + 满带宽 rate + 帧率显示',
+    cmdDisplay: 'fps_max 0 / rate / 遥测',
+    desc: 'fps_max 0 + 满带宽 rate + 右上角清爽遥测帧率/延迟显示（无左上角红字）',
     defaultKey: '',
-    command: 'fps_max "0"\nrate "786432"\ncl_showfps "1"\ncq_netgraph "1"',
+    command: 'fps_max "0"\nrate "786432"\ncl_showfps "0"\ncl_hud_telemetry_frametime_show "2"\ncl_hud_telemetry_ping_show "2"',
     isDirectCvar: true
   },
   {
@@ -2799,6 +2799,17 @@ export const CFG_PRESETS: CfgCmdPreset[] = [
     defaultKey: 'space',
     command: '+duck; +jump',
     isDirectCvar: false
+  },
+  {
+    id: 'common_jointeam_t',
+    profile: 'common',
+    category: '游戏优化与操作',
+    label: '一键切换至 T 队伍（僵尸/匪）',
+    cmdDisplay: 'jointeam 2',
+    desc: '一键快速加入 T 阵营（社区服快速切 T / 僵尸阵营）',
+    note: '附：jointeam 1 为观察者，jointeam 3 为 CT',
+    defaultKey: '',
+    command: 'jointeam 2'
   }
 ]
 
