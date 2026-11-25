@@ -21,6 +21,7 @@ export interface MapPlayRecord {
   mapDisplayName: string
   difficulty: string
   playCount: number
+  roundCount?: number
   totalMinutes: number
   lastPlayedAt: string
   lastServerName: string
@@ -35,7 +36,10 @@ export interface PlaySessionLog {
   mapDisplayName: string
   difficulty: string
   joinedAt: string
+  endedAt?: string
   durationMinutes: number
+  roundsPlayed?: number
+  source?: 'gsi' | 'a2s_track' | 'launch'
 }
 
 export interface ServerHistoryPoint {

@@ -94,6 +94,29 @@ export function writeCfgFile(
   }
 }
 
+export function deleteCfgFile(
+  cs2Path: string,
+  fileName: string
+): { success: boolean; error?: string } {
+  try {
+    const cfgDir = getCfgDir(cs2Path)
+    if (!cfgDir || !fs.existsSync(cfgDir)) {
+      return { success: false, error: '未找到 CS2 cfg 目录' }
+    }
+    const safeName = path.basename(fileName || '')
+    if (!safeName || safeName.toLowerCase() === 'autoexec.cfg') {
+      return { success: false, error: 'autoexec.cfg 不支持直接删除，请清空内容或单独移除模块' }
+    }
+    const target = path.join(cfgDir, safeName)
+    if (fs.existsSync(target)) {
+      fs.unlinkSync(target)
+    }
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || '删除 CFG 文件失败' }
+  }
+}
+
 export interface Cs2UserKeysResult {
   found: boolean
   filePath: string

@@ -64,7 +64,24 @@ const api = {
     read: (cs2Path: string, fileName: string) => ipcRenderer.invoke('cfg:read', cs2Path, fileName),
     write: (cs2Path: string, fileName: string, content: string) =>
       ipcRenderer.invoke('cfg:write', cs2Path, fileName, content),
+    delete: (cs2Path: string, fileName: string) =>
+      ipcRenderer.invoke('cfg:delete', cs2Path, fileName),
     readCs2Keys: (steamPath: string) => ipcRenderer.invoke('cfg:readCs2Keys', steamPath)
+  },
+  gsi: {
+    getState: () => ipcRenderer.invoke('gsi:getState'),
+    checkConfig: (cs2Path: string) => ipcRenderer.invoke('gsi:checkConfig', cs2Path),
+    installConfig: (cs2Path: string) => ipcRenderer.invoke('gsi:installConfig', cs2Path),
+    onState: (cb: (state: any) => void) => {
+      const listener = (_: unknown, payload: any) => cb(payload)
+      ipcRenderer.on('gsi:state', listener)
+      return () => ipcRenderer.removeListener('gsi:state', listener)
+    },
+    onEvent: (cb: (ev: any) => void) => {
+      const listener = (_: unknown, payload: any) => cb(payload)
+      ipcRenderer.on('gsi:event', listener)
+      return () => ipcRenderer.removeListener('gsi:event', listener)
+    }
   },
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),

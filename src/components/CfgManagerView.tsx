@@ -14,6 +14,9 @@ import {
   Search,
   ExternalLink,
   FilePlus2,
+  Trash2,
+  Blocks,
+  Code2,
   X
 } from 'lucide-react'
 import type { CfgFileInfo, CommunityId } from '../types/server'
@@ -24,13 +27,17 @@ import {
   mouseButtonToCs2Key
 } from '../utils/cs2Keys'
 import {
+  analyzeCfgContent,
+  removeLineRangeFromCfg,
+  upsertModuleInCfg,
+  type InstalledCfgModule
+} from '../utils/cfgModules'
+import {
   CFG_PRESETS,
   EXG_CATEGORIES,
   EXG_CFG_REFERENCE_URL,
-  EXG_ZE_RECOMMENDED_BUNDLE,
   FYS_CATEGORIES,
   FYS_REFERENCE_URL,
-  FYS_ZE_RECOMMENDED_BUNDLE,
   communityToCfgProfile,
   type CfgCmdPreset,
   type CfgProfileId
@@ -43,39 +50,62 @@ interface CfgManagerViewProps {
   onPickCs2Path: () => Promise<void>
 }
 
-interface ParsedBind {
-  key: string
-  command: string
-  lineIndex: number
-}
+const FYS_BUNDLE_IDS = [
+  'fys_hide',
+  'fys_ztele',
+  'fys_tp',
+  'fys_stopsound',
+  'fys_sm',
+  'fys_su',
+  'fys_ehud',
+  'fys_h',
+  'fys_k',
+  'fys_if',
+  'fys_nade',
+  'fys_ices',
+  'fys_fire',
+  'fys_push',
+  'fys_hole',
+  'fys_rebuy',
+  'fys_bizon',
+  'fys_p90',
+  'fys_negev',
+  'fys_m4a1',
+  'fys_ak47',
+  'common_mwheel',
+  'common_voice',
+  'common_fps'
+]
 
-function parseExistingBinds(cfgText: string): {
-  binds: Map<string, ParsedBind>
-  duplicateKeys: string[]
-} {
-  const binds = new Map<string, ParsedBind>()
-  const counts = new Map<string, number>()
-  const lines = cfgText.split(/\r?\n/)
-  const bindRe = /^\s*bind\s+"?([^"\s]+)"?\s+(?:"([^"]*)"|(\S+))/i
-  lines.forEach((line, idx) => {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('//')) return
-    const m = bindRe.exec(trimmed)
-    if (m) {
-      const lower = m[1].toLowerCase()
-      counts.set(lower, (counts.get(lower) || 0) + 1)
-      binds.set(lower, {
-        key: m[1],
-        command: m[2] !== undefined ? m[2] : m[3] || '',
-        lineIndex: idx
-      })
-    }
-  })
-  const duplicateKeys = Array.from(counts.entries())
-    .filter(([, count]) => count > 1)
-    .map(([key]) => key)
-  return { binds, duplicateKeys }
-}
+const EXG_BUNDLE_IDS = [
+  'exg_multi_input',
+  'exg_hide',
+  'exg_ztele',
+  'exg_qs',
+  'exg_jy',
+  'exg_hud',
+  'exg_nv',
+  'exg_tp',
+  'exg_rtv',
+  'exg_nomlist',
+  'exg_xz',
+  'exg_fdy',
+  'exg_mm',
+  'exg_he',
+  'exg_dec',
+  'exg_smoke',
+  'exg_bizon',
+  'exg_p90',
+  'exg_negev',
+  'exg_m4s',
+  'exg_ak',
+  'exg_ysylj',
+  'exg_shake_stop',
+  'exg_console_clean',
+  'common_mwheel',
+  'common_voice',
+  'common_fps'
+]
 
 export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
   cs2Path,
@@ -99,12 +129,17 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
   } | null>(null)
   const [cs2UserOverrides, setCs2UserOverrides] = useState<Record<string, string>>({})
   const [cs2KeysLoaded, setCs2KeysLoaded] = useState(false)
+
   const [searchQuery, setSearchQuery] = useState('')
+  const [installFilter, setInstallFilter] = useState<'all' | 'installed' | 'uninstalled'>('all')
+  const [rightTab, setRightTab] = useState<'modules' | 'code'>('modules')
   const [newFileOpen, setNewFileOpen] = useState(false)
   const [newFileName, setNewFileName] = useState('')
+  const [confirmDeleteFile, setConfirmDeleteFile] = useState(false)
   const [capturingTarget, setCapturingTarget] = useState<{
     presetId: string
     field: 'key' | 'param'
+    autoUpdate?: boolean
   } | null>(null)
 
   const isDirty = content !== savedContent
@@ -112,16 +147,16 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
   const categories = profile === 'fys' ? FYS_CATEGORIES : EXG_CATEGORIES
   const [activeCategory, setActiveCategory] = useState<string>(categories[0])
 
-  const [keyMap, setKeyMap] = useState<Record<string, string>>(() => {
-    const init: Record<string, string> = {}
-    for (const p of CFG_PRESETS) init[p.id] = p.defaultKey
-    return init
-  })
+  // Keybinds start completely empty by default (no pre-filled keys); user presses keys to bind
+  const [keyMap, setKeyMap] = useState<Record<string, string>>({})
 
+  // Non-key parameters keep sensible defaults; key-type parameters (paramIsKey) start empty
   const [paramMap, setParamMap] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {}
     for (const p of CFG_PRESETS) {
-      if (p.hasParam) init[p.id] = p.defaultParam ?? ''
+      if (p.hasParam) {
+        init[p.id] = p.paramIsKey ? '' : p.defaultParam ?? ''
+      }
     }
     return init
   })
@@ -134,10 +169,16 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
     }
   }, [profile])
 
-  const { binds: existingBinds, duplicateKeys: cfgDuplicateKeys } = useMemo(
-    () => parseExistingBinds(content),
-    [content]
+  // Parse current CFG content into modular blocks, binds, duplicates, and unmatched manual binds
+  const cfgAnalysis = useMemo(
+    () => analyzeCfgContent(content, CFG_PRESETS, profile),
+    [content, profile]
   )
+  const existingBinds = cfgAnalysis.binds
+  const cfgDuplicateKeys = cfgAnalysis.duplicateKeys
+  const installedByPresetId = cfgAnalysis.byPresetId
+  const installedModules = cfgAnalysis.installedList
+  const unmatchedBinds = cfgAnalysis.unmatchedBinds
 
   const effectiveCs2Binds = useMemo(
     () => buildEffectiveCs2Binds(cs2UserOverrides),
@@ -162,10 +203,24 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
     })
   }, [steamPath])
 
+  const profilePool = useMemo(
+    () => CFG_PRESETS.filter((p) => p.profile === profile || p.profile === 'common'),
+    [profile]
+  )
+
+  const installedCountInProfile = useMemo(
+    () => profilePool.filter((p) => installedByPresetId.has(p.id)).length,
+    [profilePool, installedByPresetId]
+  )
+
   const visiblePresets = useMemo(() => {
-    const pool = CFG_PRESETS.filter(
-      (p) => p.profile === profile || p.profile === 'common'
-    )
+    let pool = profilePool
+    if (installFilter === 'installed') {
+      pool = pool.filter((p) => installedByPresetId.has(p.id))
+    } else if (installFilter === 'uninstalled') {
+      pool = pool.filter((p) => !installedByPresetId.has(p.id))
+    }
+
     const q = searchQuery.trim().toLowerCase()
     if (q) {
       return pool.filter(
@@ -178,17 +233,20 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
           (p.note && p.note.toLowerCase().includes(q))
       )
     }
+    if (installFilter === 'installed') {
+      return pool
+    }
     return pool.filter((p) => p.category === activeCategory)
-  }, [profile, activeCategory, searchQuery])
+  }, [profilePool, activeCategory, searchQuery, installFilter, installedByPresetId])
 
-  // Group visible presets by subGroup (or category when searching)
+  // Group visible presets by subGroup (or category when searching / viewing installed filter)
   const groupedPresets = useMemo(() => {
     const groups: Array<{ title: string; items: CfgCmdPreset[] }> = []
     const indexByTitle = new Map<string, number>()
-    const isSearching = searchQuery.trim().length > 0
+    const showCategoryTitle = searchQuery.trim().length > 0 || installFilter === 'installed'
 
     for (const item of visiblePresets) {
-      const title = isSearching
+      const title = showCategoryTitle
         ? item.subGroup
           ? `${item.category} · ${item.subGroup}`
           : item.category
@@ -202,7 +260,26 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
       }
     }
     return groups
-  }, [visiblePresets, searchQuery])
+  }, [visiblePresets, searchQuery, installFilter])
+
+  const getEffectiveKey = (preset: CfgCmdPreset): string => {
+    if (Object.prototype.hasOwnProperty.call(keyMap, preset.id)) {
+      return (keyMap[preset.id] || '').trim()
+    }
+    return (installedByPresetId.get(preset.id)?.boundKey || '').trim()
+  }
+
+  const getEffectiveParam = (preset: CfgCmdPreset): string => {
+    if (!preset.hasParam) return ''
+    const installedParam = installedByPresetId.get(preset.id)?.boundParam
+    if (preset.paramIsKey) {
+      if (Object.prototype.hasOwnProperty.call(paramMap, preset.id) && paramMap[preset.id] !== '') {
+        return paramMap[preset.id].trim()
+      }
+      return (installedParam || '').trim()
+    }
+    return (paramMap[preset.id] ?? installedParam ?? preset.defaultParam ?? '').trim()
+  }
 
   const refreshFiles = async () => {
     if (!window.cs2Api || !cs2Path) return
@@ -220,13 +297,15 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
     if (!window.cs2Api || !cs2Path) return
     setActiveFile(fileName)
     setStatusMsg(null)
+    setConfirmDeleteFile(false)
+    setKeyMap({})
     const res = await window.cs2Api.cfg.read(cs2Path, fileName)
     if (res.exists) {
       setContent(res.content)
       setSavedContent(res.content)
     } else {
       const tag = profile === 'fys' ? 'FYS 风云社' : 'EXG / ZED 社区'
-      const initial = `// 99x launcher - CS2 ${tag} 自动加载配置 (${fileName})\n// 请确保 Steam 启动项包含 +exec ${fileName}\n\n`
+      const initial = `// 99x launcher - CS2 ${tag} 模块化配置 (${fileName})\n// 请确保 Steam 启动项包含 +exec ${fileName}\n\n`
       setContent(initial)
       setSavedContent('')
     }
@@ -246,21 +325,23 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
     if (!cs2Cmd) return null
     const lowerExpected = expectedCmd.trim().toLowerCase()
     const lowerCs2 = cs2Cmd.trim().toLowerCase()
-    // Intentional enhancements (e.g. "+reload; fov_cs_debug 110" on R, "+duck; +jump" on Space) are not conflicts
     if (lowerExpected && (lowerExpected === lowerCs2 || lowerExpected.includes(lowerCs2))) {
       return null
     }
     return cs2Cmd
   }
 
-  const buildCommandText = (preset: CfgCmdPreset): string | null => {
+  const buildCommandText = (preset: CfgCmdPreset, overrideParam?: string): string | null => {
     if (!preset.hasParam) return preset.command
-    const param = (paramMap[preset.id] ?? preset.defaultParam ?? '').trim()
+    const param = (overrideParam !== undefined ? overrideParam : getEffectiveParam(preset)).trim()
     if (preset.paramRequired && !param) {
       setStatusMsg({
         type: 'error',
-        text: `指令「${preset.cmdDisplay}」需要填写${preset.paramLabel || '参数'}（例如：${preset.paramPlaceholder || preset.defaultParam}）`
+        text: `指令「${preset.label}」需要先设置${preset.paramLabel || '参数'}`
       })
+      if (preset.paramIsKey) {
+        setCapturingTarget({ presetId: preset.id, field: 'param' })
+      }
       return null
     }
     if (preset.command.includes('{{PARAM}}')) {
@@ -270,104 +351,137 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
     return param ? `${preset.command} ${param}` : preset.command
   }
 
-  const appendLines = (
-    lines: string,
-    label: string,
-    warnText?: string
+  const applyPresetModule = (
+    preset: CfgCmdPreset,
+    overrideKey?: string,
+    overrideParam?: string
   ) => {
-    setContent((prev) => {
-      const sep = prev.endsWith('\n') || !prev ? '' : '\n'
-      return `${prev}${sep}// ${label}\n${lines}\n`
-    })
-    setStatusMsg(
-      warnText
-        ? { type: 'warn', text: warnText }
-        : {
-            type: 'success',
-            text: `已将「${label}」写入编辑器，点击「保存 ${activeFile}」或按 Ctrl+S 写入磁盘`
-          }
-    )
-  }
-
-  const handleInsertPreset = (preset: CfgCmdPreset) => {
-    const cmdText = buildCommandText(preset)
+    const cmdText = buildCommandText(preset, overrideParam)
     if (cmdText === null) return
 
+    const existingMod = installedByPresetId.get(preset.id)
+
     if (preset.isDirectCvar) {
-      appendLines(cmdText, preset.label)
+      setContent((prev) => upsertModuleInCfg(prev, preset, cmdText, existingMod))
+      setStatusMsg({
+        type: 'success',
+        text: existingMod
+          ? `已更新模块「${preset.label}」，记得按 Ctrl+S 保存`
+          : `已添加模块「${preset.label}」，点击「保存 ${activeFile}」或按 Ctrl+S 写入磁盘`
+      })
       return
     }
 
-    const key = (keyMap[preset.id] ?? preset.defaultKey).trim()
+    const key = (overrideKey !== undefined ? overrideKey : getEffectiveKey(preset)).trim()
     if (!key) {
       setStatusMsg({
         type: 'error',
-        text: `请先点击「${preset.label}」右侧按键框并按下要绑定的按键（支持键盘、鼠标侧键/中键/右键、滚轮）`
+        text: `请先按下要为「${preset.label}」绑定的按键（支持键盘、鼠标中键/右键/侧键、滚轮）`
       })
       setCapturingTarget({ presetId: preset.id, field: 'key' })
       return
     }
 
-    const existing = existingBinds.get(key.toLowerCase())
+    const body = preset.isKeyTemplate
+      ? cmdText.replace(/\{\{KEY\}\}/g, key)
+      : `bind "${key}" "${cmdText}"`
+
+    const lowerKey = key.toLowerCase()
+    const existingBind = existingBinds.get(lowerKey)
+    const isSameModuleKey =
+      existingMod && existingMod.boundKey.toLowerCase() === lowerKey
     const expectedCheck = preset.isKeyTemplate ? preset.bindMatchCmd || '' : cmdText
     const cs2Conflict = getCs2Conflict(key, expectedCheck)
 
-    if (preset.isKeyTemplate) {
-      const rendered = cmdText.replace(/\{\{KEY\}\}/g, key)
-      const warnings: string[] = []
-      if (
-        existing &&
-        existing.command.trim().toLowerCase() !== (preset.bindMatchCmd || '').trim().toLowerCase()
-      ) {
-        warnings.push(`当前 CFG 中「${key}」已有绑定 "${existing.command}"`)
-      }
-      if (cs2Conflict) {
-        warnings.push(`CS2 原绑定为「${formatCs2CommandLabel(cs2Conflict)}」`)
-      }
-      const warnMsg =
-        warnings.length > 0
-          ? `已写入「${preset.label} (${key})」，但注意重复按键冲突：${warnings.join('；')}，请检查或更换按键`
-          : undefined
-      appendLines(rendered, `${preset.label} (${key})`, warnMsg)
-      return
+    setContent((prev) => upsertModuleInCfg(prev, preset, body, existingMod, key))
+
+    const warnings: string[] = []
+    if (existingBind && !isSameModuleKey) {
+      warnings.push(`当前 CFG 中「${key}」原绑定为 "${existingBind.command}"`)
+    }
+    if (cs2Conflict) {
+      warnings.push(`CS2 原绑定为「${formatCs2CommandLabel(cs2Conflict)}」`)
     }
 
-    const newBindLine = `bind "${key}" "${cmdText}"`
-
-    if (existing) {
-      // Replace existing bind for the same key in-place to avoid duplicate conflicting binds
-      setContent((prev) => {
-        const lines = prev.split(/\r?\n/)
-        if (existing.lineIndex >= 0 && existing.lineIndex < lines.length) {
-          lines[existing.lineIndex] = newBindLine
-        }
-        return lines.join('\n')
+    if (warnings.length > 0) {
+      setStatusMsg({
+        type: 'warn',
+        text: `${existingMod ? '已更新' : '已添加'}模块「${preset.label} (${key})」，但注意重复按键：${warnings.join('；')}`
       })
-      setStatusMsg(
-        cs2Conflict
-          ? {
-              type: 'warn',
-              text: `已将「${key}」替换为 ${cmdText}；注意 CS2 原绑定为「${formatCs2CommandLabel(cs2Conflict)}」，请确认是否需要换键`
-            }
-          : {
-              type: 'success',
-              text: `已更新按键「${key}」绑定为 ${cmdText}（已自动替换原绑定，记得保存）`
-            }
-      )
-      return
+    } else {
+      setStatusMsg({
+        type: 'success',
+        text: `${existingMod ? '已更新' : '已添加'}模块「${preset.label} (${key})」，按 Ctrl+S 保存生效`
+      })
     }
-
-    const warnMsg = cs2Conflict
-      ? `已写入「${preset.label} (${key})」，但注意 CS2 原绑定为「${formatCs2CommandLabel(cs2Conflict)}」，避免误覆盖游戏按键`
-      : undefined
-    appendLines(newBindLine, `${preset.label} (${preset.cmdDisplay})`, warnMsg)
   }
 
-  const handleInsertBundle = () => {
-    if (profile === 'fys') {
-      appendLines(FYS_ZE_RECOMMENDED_BUNDLE, 'FYS 风云社 ZE v5 推荐套装')
+  const handleRemoveModule = (mod: InstalledCfgModule) => {
+    setContent((prev) => removeLineRangeFromCfg(prev, mod.startLine, mod.endLine))
+    setKeyMap((prev) => {
+      const next = { ...prev }
+      delete next[mod.presetId]
+      return next
+    })
+    setStatusMsg({
+      type: 'success',
+      text: `已移除模块「${mod.preset.label}」，记得按 Ctrl+S 保存 ${activeFile}`
+    })
+  }
+
+  const handleRemoveManualLine = (lineIndex: number, label: string) => {
+    setContent((prev) => removeLineRangeFromCfg(prev, lineIndex, lineIndex))
+    setStatusMsg({
+      type: 'success',
+      text: `已删除手动绑定「${label}」，记得按 Ctrl+S 保存`
+    })
+  }
+
+  const handleInsertModularBundle = () => {
+    const ids = profile === 'fys' ? FYS_BUNDLE_IDS : EXG_BUNDLE_IDS
+    const presetMap = new Map(CFG_PRESETS.map((p) => [p.id, p]))
+    let added = 0
+
+    setContent((prev) => {
+      let next = prev
+      const currentAnalysis = analyzeCfgContent(next, CFG_PRESETS, profile)
+
+      for (const id of ids) {
+        const preset = presetMap.get(id)
+        if (!preset || currentAnalysis.byPresetId.has(id)) continue
+
+        if (preset.isDirectCvar) {
+          next = upsertModuleInCfg(next, preset, preset.command)
+          added++
+          continue
+        }
+
+        const key = preset.defaultKey
+        if (!key) continue
+        const cmdText = preset.hasParam && preset.defaultParam
+          ? preset.command.includes('{{PARAM}}')
+            ? preset.command.replace(/\{\{PARAM\}\}/g, preset.defaultParam)
+            : `${preset.command} ${preset.defaultParam}`
+          : preset.command
+        const body = preset.isKeyTemplate
+          ? cmdText.replace(/\{\{KEY\}\}/g, key)
+          : `bind "${key}" "${cmdText}"`
+        next = upsertModuleInCfg(next, preset, body, undefined, key)
+        added++
+      }
+      return next
+    })
+
+    if (added > 0) {
+      setStatusMsg({
+        type: 'success',
+        text: `已以模块化方式装入 ${added} 个${profile === 'fys' ? ' FYS ' : ' EXG '}推荐模块（可在右侧「已装模块」随时单独改键或删除）`
+      })
     } else {
-      appendLines(EXG_ZE_RECOMMENDED_BUNDLE, 'EXG ZE 完整推荐绑定套装')
+      setStatusMsg({
+        type: 'warn',
+        text: '当前 CFG 已包含全部推荐套装模块，无需重复添加'
+      })
     }
   }
 
@@ -378,6 +492,19 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
     setNewFileOpen(false)
     setNewFileName('')
     loadFile(finalName)
+  }
+
+  const handleDeleteCurrentFile = async () => {
+    if (!window.cs2Api || !cs2Path) return
+    const res = await window.cs2Api.cfg.delete(cs2Path, activeFile)
+    setConfirmDeleteFile(false)
+    if (res.success) {
+      setStatusMsg({ type: 'success', text: `已删除 CFG 文件：${activeFile}` })
+      await refreshFiles()
+      await loadFile('autoexec.cfg')
+    } else {
+      setStatusMsg({ type: 'error', text: res.error || '删除 CFG 文件失败' })
+    }
   }
 
   const handleSave = async () => {
@@ -416,25 +543,34 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
       } else {
         setParamMap((prev) => ({ ...prev, [capturingTarget.presetId]: cs2Key }))
       }
+      const shouldAutoUpdate = Boolean(capturingTarget.autoUpdate)
       setCapturingTarget(null)
+
+      if (shouldAutoUpdate && targetPreset) {
+        applyPresetModule(
+          targetPreset,
+          capturingTarget.field === 'key' ? cs2Key : undefined,
+          capturingTarget.field === 'param' ? cs2Key : undefined
+        )
+        return
+      }
 
       // Immediate conflict check against current CFG and CS2 keybindings
       const lower = cs2Key.toLowerCase()
       const cfgExisting = existingBinds.get(lower)
+      const installedMod = targetPreset ? installedByPresetId.get(targetPreset.id) : undefined
+      const isOwnExistingKey =
+        installedMod && installedMod.boundKey.toLowerCase() === lower
       const expectedCmd =
         capturingTarget.field === 'key' && targetPreset
           ? targetPreset.isKeyTemplate
             ? targetPreset.bindMatchCmd || ''
             : targetPreset.command
           : ''
-      const isSameCfgBind =
-        cfgExisting &&
-        expectedCmd &&
-        cfgExisting.command.trim().toLowerCase() === expectedCmd.trim().toLowerCase()
       const cs2Conflict = getCs2Conflict(cs2Key, expectedCmd)
 
       const reasons: string[] = []
-      if (cfgExisting && !isSameCfgBind) {
+      if (cfgExisting && !isOwnExistingKey) {
         reasons.push(`当前 CFG 已绑定为「${cfgExisting.command}」`)
       }
       if (cs2Conflict) {
@@ -464,13 +600,10 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
         return
       }
       const mapped = keyboardEventToCs2Key(e)
-      if (mapped) {
-        commitKey(mapped)
-      }
+      if (mapped) commitKey(mapped)
     }
 
     const onMouseDown = (e: MouseEvent) => {
-      // Left-click outside capture buttons cancels capture; capture button's own onClick handles toggle/switch
       if (e.button === 0) {
         const targetEl = (e.target as HTMLElement | null)?.closest('[data-keybind-capture]')
         if (targetEl) return
@@ -508,7 +641,7 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
       window.removeEventListener('contextmenu', onContextMenu, true)
       window.removeEventListener('wheel', onWheel, true)
     }
-  }, [capturingTarget, existingBinds, effectiveCs2Binds, cs2KeysLoaded])
+  }, [capturingTarget, existingBinds, effectiveCs2Binds, cs2KeysLoaded, installedByPresetId])
 
   // Support Ctrl+S / Cmd+S quick save
   useEffect(() => {
@@ -536,24 +669,21 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-[22px] font-semibold tracking-tight text-[#1A1A1A] dark:text-[#F3F3F3]">
-            CFG 配置与社区指令绑定
+            CFG 模块化配置中心
           </h1>
           <p className="text-[12.5px] text-[#5D5D5D] dark:text-[#A0A0A0] mt-0.5">
-            可视化生成并管理 CS2 <code className="font-mono">autoexec.cfg</code>，内置{' '}
-            <span className="font-medium text-[#1A1A1A] dark:text-[#E6E6E6]">
-              FYS 风云社 v5 全模式指令（.前缀）
-            </span>{' '}
-            与 EXG / ZED 指令库（.前缀）
+            默认空键位按需录制、独立模块块管理（一键增删改）、自动检测 CS2 键位与 CFG 重复冲突
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
-            onClick={handleInsertBundle}
+            onClick={handleInsertModularBundle}
             className="h-8 px-3.5 fluent-btn-standard text-[12.5px] inline-flex items-center gap-1.5 whitespace-nowrap"
+            title="以独立可删模块装入社区推荐套装（跳过已装模块）"
           >
             <Sparkles className="w-3.5 h-3.5 text-[#0067C0] dark:text-[#60CDFF]" />
-            {profile === 'fys' ? '一键生成 FYS 推荐配置' : '一键生成 EXG 推荐配置'}
+            {profile === 'fys' ? '一键装入 FYS 推荐套装' : '一键装入 EXG 推荐套装'}
           </button>
           {cfgDir && (
             <button
@@ -622,13 +752,13 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
 
       {/* Main Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left: Community Command & Keybind Studio */}
+        {/* Left: Modular Command & Script Picker */}
         <div className="lg:col-span-6 fluent-card p-4 flex flex-col gap-3">
           {/* Profile Switcher + Reference Link */}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-[14px] font-semibold">
               <Keyboard className="w-4 h-4 text-[#0067C0] dark:text-[#60CDFF]" />
-              <span>社区快捷指令库</span>
+              <span>CFG 模块选择区</span>
             </div>
 
             <div className="flex items-center gap-1.5">
@@ -675,46 +805,78 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
             </div>
           </div>
 
-          {/* Search Bar */}
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 text-[#5D5D5D] dark:text-[#A0A0A0] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={
-                profile === 'fys'
-                  ? '搜索风云社指令，如 .hide、.nade、.bizon、血针、魔兽、指挥官...'
-                  : '搜索 EXG 指令，如 tp、.hide、.xz、越肩、灵魂出窍、后视镜、一键开枪、夜视仪...'
-              }
-              className="w-full h-8 pl-8 pr-7 fluent-input text-[12px]"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#5D5D5D] hover:text-[#1A1A1A] dark:hover:text-[#F3F3F3]"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+          {/* Search Bar + Installed Filter Pills */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="w-3.5 h-3.5 text-[#5D5D5D] dark:text-[#A0A0A0] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={
+                  profile === 'fys'
+                    ? '搜索风云社指令，如 .hide、.nade、.bizon、血针、魔兽...'
+                    : '搜索 EXG 指令，如 tp、.bet、.hide、越肩、灵魂出窍、泛光、切T...'
+                }
+                className="w-full h-8 pl-8 pr-7 fluent-input text-[12px]"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#5D5D5D] hover:text-[#1A1A1A] dark:hover:text-[#F3F3F3]"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="inline-flex rounded-md p-0.5 bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] text-[11px] shrink-0">
+              {(
+                [
+                  { id: 'all', label: '全部' },
+                  { id: 'installed', label: `已添加 (${installedCountInProfile})` },
+                  { id: 'uninstalled', label: '未添加' }
+                ] as const
+              ).map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setInstallFilter(f.id)}
+                  className={`px-2 py-1 rounded transition-colors ${
+                    installFilter === f.id
+                      ? 'bg-white dark:bg-[#2C2C2C] text-[#0067C0] dark:text-[#60CDFF] shadow-sm font-medium'
+                      : 'text-[#5D5D5D] dark:text-[#A0A0A0]'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Category Tabs (Fluent Pivot) */}
-          {!searchQuery.trim() && (
+          {!searchQuery.trim() && installFilter !== 'installed' && (
             <div className="flex flex-wrap gap-1 border-b border-black/[0.06] dark:border-white/[0.08] pb-2">
               {categories.map((cat) => {
                 const active = activeCategory === cat
+                const catInstalled = profilePool.filter(
+                  (p) => p.category === cat && installedByPresetId.has(p.id)
+                ).length
                 return (
                   <button
                     key={cat}
                     onClick={() => setActiveCategory(cat)}
-                    className={`relative px-2.5 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+                    className={`relative px-2.5 py-1.5 rounded-md text-[12px] font-medium transition-colors inline-flex items-center gap-1.5 ${
                       active
                         ? 'bg-black/[0.05] dark:bg-white/[0.08] text-[#0067C0] dark:text-[#60CDFF]'
                         : 'text-[#5D5D5D] dark:text-[#A0A0A0] hover:bg-black/[0.03] dark:hover:bg-white/[0.04]'
                     }`}
                   >
-                    {cat}
+                    <span>{cat}</span>
+                    {catInstalled > 0 && (
+                      <span className="px-1.5 py-0 rounded-full text-[10px] bg-[#0F7B0F]/15 dark:bg-[#6CCB5F]/20 text-[#0F7B0F] dark:text-[#6CCB5F] font-mono">
+                        {catInstalled}
+                      </span>
+                    )}
                     {active && (
                       <span className="absolute bottom-0 left-2.5 right-2.5 h-[2px] rounded-full bg-[#0067C0] dark:bg-[#60CDFF]" />
                     )}
@@ -725,10 +887,14 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
           )}
 
           {/* Preset List */}
-          <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+          <div className="space-y-3 max-h-[540px] overflow-y-auto pr-1">
             {groupedPresets.length === 0 ? (
               <div className="py-12 text-center text-[12.5px] text-[#5D5D5D] dark:text-[#A0A0A0]">
-                未找到匹配「{searchQuery}」的指令
+                {installFilter === 'installed'
+                  ? '当前 CFG 尚未添加任何可识别的社区模块'
+                  : searchQuery
+                    ? `未找到匹配「${searchQuery}」的指令`
+                    : '该分类下暂无未添加模块'}
               </div>
             ) : (
               groupedPresets.map((group) => (
@@ -739,36 +905,50 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                     </div>
                   )}
                   {group.items.map((preset) => {
-                    const currentKey = (keyMap[preset.id] ?? preset.defaultKey).trim()
+                    const installedMod = installedByPresetId.get(preset.id)
+                    const currentKey = getEffectiveKey(preset)
                     const existing = currentKey
                       ? existingBinds.get(currentKey.toLowerCase())
                       : undefined
-                    const currentParam = preset.hasParam
-                      ? (paramMap[preset.id] ?? preset.defaultParam ?? '').trim()
-                      : ''
+                    const currentParam = getEffectiveParam(preset)
                     const expectedCmd = preset.isKeyTemplate
                       ? preset.bindMatchCmd || ''
                       : preset.hasParam && currentParam
-                        ? `${preset.command} ${currentParam}`
+                        ? preset.command.includes('{{PARAM}}')
+                          ? preset.command.replace(/\{\{PARAM\}\}/g, currentParam)
+                          : `${preset.command} ${currentParam}`
                         : preset.command
-                    const isSameBound =
+
+                    const isOwnKey =
+                      installedMod &&
+                      installedMod.boundKey.toLowerCase() === currentKey.toLowerCase()
+                    const isCfgConflict =
                       !preset.isDirectCvar &&
-                      Boolean(expectedCmd) &&
-                      existing &&
-                      existing.command.trim().toLowerCase() === expectedCmd.trim().toLowerCase()
-                    const isConflictBound =
-                      !preset.isDirectCvar && !preset.isKeyTemplate && existing && !isSameBound
-                    const isTemplateKeyUsed =
-                      Boolean(preset.isKeyTemplate) && existing && !isSameBound
+                      Boolean(existing) &&
+                      !isOwnKey &&
+                      existing!.command.trim().toLowerCase() !== expectedCmd.trim().toLowerCase()
                     const cs2Conflict =
                       !preset.isDirectCvar && currentKey
                         ? getCs2Conflict(currentKey, expectedCmd)
                         : null
 
+                    const keyChanged =
+                      Boolean(installedMod) &&
+                      !preset.isDirectCvar &&
+                      currentKey.toLowerCase() !== (installedMod?.boundKey || '').toLowerCase()
+                    const paramChanged =
+                      Boolean(installedMod) &&
+                      Boolean(preset.hasParam) &&
+                      currentParam !== (installedMod?.boundParam || '')
+
                     return (
                       <div
                         key={preset.id}
-                        className="rounded-md bg-[#F9F9F9] dark:bg-white/[0.03] border border-black/[0.05] dark:border-white/[0.06] p-2.5 flex flex-col gap-2"
+                        className={`rounded-md p-2.5 flex flex-col gap-2 border transition-colors ${
+                          installedMod
+                            ? 'bg-[#0F7B0F]/[0.04] dark:bg-[#6CCB5F]/[0.06] border-[#0F7B0F]/25 dark:border-[#6CCB5F]/25 border-l-[3px] border-l-[#0F7B0F] dark:border-l-[#6CCB5F]'
+                            : 'bg-[#F9F9F9] dark:bg-white/[0.03] border-black/[0.05] dark:border-white/[0.06]'
+                        }`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
@@ -779,27 +959,21 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                               <code className="px-1.5 py-0.5 rounded bg-black/[0.05] dark:bg-white/[0.08] font-mono text-[11px] text-[#0067C0] dark:text-[#60CDFF]">
                                 {preset.cmdDisplay}
                               </code>
-                              {isSameBound && (
-                                <span className="px-1.5 py-0.5 rounded bg-[#0F7B0F]/10 dark:bg-[#6CCB5F]/15 text-[#0F7B0F] dark:text-[#6CCB5F] text-[10px] font-medium">
-                                  已绑定
+                              {installedMod && (
+                                <span className="px-1.5 py-0.5 rounded bg-[#0F7B0F]/15 dark:bg-[#6CCB5F]/20 text-[#0F7B0F] dark:text-[#6CCB5F] text-[10px] font-medium inline-flex items-center gap-0.5">
+                                  <CheckCircle2 className="w-2.5 h-2.5" />
+                                  {installedMod.boundKey
+                                    ? `已添加 · ${installedMod.boundKey}`
+                                    : '已添加'}
                                 </span>
                               )}
-                              {isConflictBound && (
+                              {isCfgConflict && existing && (
                                 <span
                                   className="px-1.5 py-0.5 rounded bg-[#9D5D00]/10 dark:bg-[#FCE100]/15 text-[#9D5D00] dark:text-[#FCE100] text-[10px] font-medium inline-flex items-center gap-0.5"
-                                  title={`当前 CFG 中 ${existing.key} 已绑定为 "${existing.command}"，避免重复按键；点击替换将覆盖原绑定`}
+                                  title={`当前 CFG 中 ${existing.key} 已绑定为 "${existing.command}"，避免重复按键`}
                                 >
                                   <AlertTriangle className="w-2.5 h-2.5" />
                                   CFG 冲突 ({existing.key})
-                                </span>
-                              )}
-                              {isTemplateKeyUsed && (
-                                <span
-                                  className="px-1.5 py-0.5 rounded bg-[#9D5D00]/10 dark:bg-[#FCE100]/15 text-[#9D5D00] dark:text-[#FCE100] text-[10px] font-medium inline-flex items-center gap-0.5"
-                                  title={`当前 CFG 中按键 ${existing.key} 已有绑定 "${existing.command}"，请勿重复绑定`}
-                                >
-                                  <AlertTriangle className="w-2.5 h-2.5" />
-                                  CFG 已占用 ({existing.key})
                                 </span>
                               )}
                               {cs2Conflict && (
@@ -827,7 +1001,6 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                               const isCapturingKey =
                                 capturingTarget?.presetId === preset.id &&
                                 capturingTarget.field === 'key'
-                              const boundKey = keyMap[preset.id] ?? ''
                               return (
                                 <div className="relative flex items-center">
                                   <button
@@ -843,7 +1016,7 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                                     className={`min-w-[74px] h-7 px-2 rounded-md border font-mono text-[11.5px] transition-colors flex items-center justify-center ${
                                       isCapturingKey
                                         ? 'border-[#0067C0] dark:border-[#60CDFF] bg-[#0067C0]/10 dark:bg-[#60CDFF]/15 text-[#0067C0] dark:text-[#60CDFF] animate-pulse'
-                                        : boundKey
+                                        : currentKey
                                           ? 'fluent-input text-[#1A1A1A] dark:text-[#F3F3F3] hover:border-[#0067C0]/60 dark:hover:border-[#60CDFF]/60 pr-5'
                                           : 'fluent-input text-[#5D5D5D] dark:text-[#8E8E8E] hover:border-[#0067C0]/60 dark:hover:border-[#60CDFF]/60'
                                     }`}
@@ -853,9 +1026,9 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                                         : '点击后按下要绑定的按键（支持键盘、鼠标中键/右键/侧键、滚轮）'
                                     }
                                   >
-                                    {isCapturingKey ? '请按键...' : boundKey || '点击按键'}
+                                    {isCapturingKey ? '请按键...' : currentKey || '点击按键'}
                                   </button>
-                                  {boundKey && !isCapturingKey && (
+                                  {currentKey && !isCapturingKey && (
                                     <button
                                       type="button"
                                       onClick={(e) => {
@@ -871,12 +1044,26 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                                 </div>
                               )
                             })()}
-                            <button
-                              onClick={() => handleInsertPreset(preset)}
-                              className="h-7 px-2.5 fluent-btn-accent text-[11.5px] inline-flex items-center gap-1"
-                            >
-                              <Plus className="w-3 h-3" /> {isConflictBound ? '替换' : '写入'}
-                            </button>
+
+                            {(!installedMod || keyChanged || paramChanged) && (
+                              <button
+                                onClick={() => applyPresetModule(preset)}
+                                className="h-7 px-2.5 fluent-btn-accent text-[11.5px] inline-flex items-center gap-1"
+                              >
+                                <Plus className="w-3 h-3" />
+                                {installedMod ? '更新' : '添加'}
+                              </button>
+                            )}
+
+                            {installedMod && (
+                              <button
+                                onClick={() => handleRemoveModule(installedMod)}
+                                className="h-7 px-2 rounded-md bg-[#C42B1C]/10 hover:bg-[#C42B1C]/20 text-[#C42B1C] dark:text-[#FF99A4] text-[11.5px] font-medium inline-flex items-center gap-1 transition-colors"
+                                title="从当前 CFG 中一键移除该模块"
+                              >
+                                <Trash2 className="w-3 h-3" /> 移除
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -889,7 +1076,7 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                               const isCapturingParam =
                                 capturingTarget?.presetId === preset.id &&
                                 capturingTarget.field === 'param'
-                              const paramKey = paramMap[preset.id] ?? ''
+                              const paramKey = currentParam
                               const paramCfgExisting = paramKey
                                 ? existingBinds.get(paramKey.toLowerCase())
                                 : undefined
@@ -979,8 +1166,9 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
           </div>
         </div>
 
-        {/* Right: CFG File Switcher + Code Editor */}
+        {/* Right: Modular Manager & Source Code Editor */}
         <div className="lg:col-span-6 fluent-card p-4 flex flex-col gap-3">
+          {/* File Switcher + Save Toolbar */}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-1.5">
               <FileCode2 className="w-4 h-4 text-[#0067C0] dark:text-[#60CDFF]" />
@@ -991,7 +1179,7 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
               >
                 {allFileOptions.map((name) => (
                   <option key={name} value={name}>
-                    {name === 'autoexec.cfg' ? 'autoexec.cfg（推荐自动加载）' : name}
+                    {name === 'autoexec.cfg' ? 'autoexec.cfg（自动加载）' : name}
                   </option>
                 ))}
               </select>
@@ -1001,10 +1189,36 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                   setNewFileOpen((v) => !v)
                 }}
                 className="h-8 px-2.5 fluent-btn-standard text-[11.5px] inline-flex items-center gap-1"
-                title="新建独立 CFG 文件（例如按社区拆分 fys_ze.cfg / exg_ze.cfg）"
+                title="新建独立 CFG 文件（可按社区或功能拆分模块文件）"
               >
                 <FilePlus2 className="w-3.5 h-3.5" /> 新建
               </button>
+              {activeFile.toLowerCase() !== 'autoexec.cfg' && (
+                confirmDeleteFile ? (
+                  <div className="inline-flex items-center gap-1">
+                    <button
+                      onClick={handleDeleteCurrentFile}
+                      className="h-8 px-2.5 rounded-md bg-[#C42B1C] text-white text-[11.5px] font-medium"
+                    >
+                      确认删除
+                    </button>
+                    <button
+                      onClick={() => setConfirmDeleteFile(false)}
+                      className="h-8 px-2 fluent-btn-standard text-[11.5px]"
+                    >
+                      取消
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmDeleteFile(true)}
+                    className="w-8 h-8 rounded-md bg-[#C42B1C]/10 hover:bg-[#C42B1C]/20 text-[#C42B1C] dark:text-[#FF99A4] flex items-center justify-center"
+                    title={`删除文件 ${activeFile}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )
+              )}
               <button
                 onClick={refreshFiles}
                 className="w-8 h-8 fluent-btn-standard flex items-center justify-center"
@@ -1023,7 +1237,7 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                 }}
                 className="h-8 px-2.5 fluent-btn-standard text-[11.5px] inline-flex items-center gap-1 whitespace-nowrap"
               >
-                <Copy className="w-3 h-3" /> 复制 +exec
+                <Copy className="w-3 h-3" /> +exec
               </button>
               <button
                 onClick={handleSave}
@@ -1049,7 +1263,7 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleCreateNewFile()
                 }}
-                placeholder="输入文件名，如 fys_ze.cfg"
+                placeholder="输入文件名，如 exg_ze.cfg"
                 className="flex-1 h-7 px-2 fluent-input font-mono text-[12px]"
                 autoFocus
               />
@@ -1068,21 +1282,180 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
             </div>
           )}
 
-          <textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            spellCheck={false}
-            className="w-full h-[520px] p-3.5 rounded-md bg-[#FAFAFA] dark:bg-[#1C1C1C] border border-black/[0.08] dark:border-white/[0.08] font-mono text-[12.5px] leading-relaxed text-[#1A1A1A] dark:text-[#E6E6E6] outline-none focus:border-[#0067C0] dark:focus:border-[#60CDFF] resize-none"
-            placeholder="// 在此编写或点击左侧社区快捷指令自动生成 CFG 配置..."
-          />
+          {/* Right Pane View Mode Switcher: Modular Blocks vs Raw Code */}
+          <div className="flex items-center justify-between gap-2 border-b border-black/[0.06] dark:border-white/[0.08] pb-2">
+            <div className="inline-flex rounded-md p-0.5 bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08]">
+              <button
+                onClick={() => setRightTab('modules')}
+                className={`px-3 py-1 rounded text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors ${
+                  rightTab === 'modules'
+                    ? 'bg-white dark:bg-[#2C2C2C] text-[#0067C0] dark:text-[#60CDFF] shadow-sm'
+                    : 'text-[#5D5D5D] dark:text-[#A0A0A0]'
+                }`}
+              >
+                <Blocks className="w-3.5 h-3.5" />
+                已装模块 ({installedModules.length + unmatchedBinds.length})
+              </button>
+              <button
+                onClick={() => setRightTab('code')}
+                className={`px-3 py-1 rounded text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors ${
+                  rightTab === 'code'
+                    ? 'bg-white dark:bg-[#2C2C2C] text-[#0067C0] dark:text-[#60CDFF] shadow-sm'
+                    : 'text-[#5D5D5D] dark:text-[#A0A0A0]'
+                }`}
+              >
+                <Code2 className="w-3.5 h-3.5" />
+                CFG 源码
+              </button>
+            </div>
+
+            {installedModules.length > 0 && rightTab === 'modules' && (
+              <span className="text-[11px] text-[#5D5D5D] dark:text-[#A0A0A0]">
+                点击按键框可直接改键，点垃圾桶一键删除模块
+              </span>
+            )}
+          </div>
+
+          {rightTab === 'modules' ? (
+            <div className="h-[520px] overflow-y-auto pr-1 space-y-2">
+              {installedModules.length === 0 && unmatchedBinds.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center px-6 gap-2 text-[#5D5D5D] dark:text-[#A0A0A0]">
+                  <Blocks className="w-8 h-8 opacity-40" />
+                  <div className="text-[13px] font-medium">当前 {activeFile} 尚未装入任何 CFG 模块</div>
+                  <div className="text-[11.5px] max-w-sm">
+                    在左侧选择需要的指令或脚本，点击按键框按下你顺手的键再点「添加」，或点击右上角一键装入推荐套装。
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {installedModules.map((mod) => {
+                    const isCapturingMod =
+                      capturingTarget?.presetId === mod.presetId &&
+                      capturingTarget.field === 'key' &&
+                      capturingTarget.autoUpdate
+                    const cs2Conflict = mod.boundKey
+                      ? getCs2Conflict(
+                          mod.boundKey,
+                          mod.preset.isKeyTemplate ? mod.preset.bindMatchCmd || '' : mod.preset.command
+                        )
+                      : null
+
+                    return (
+                      <div
+                        key={`${mod.presetId}_${mod.startLine}`}
+                        className="rounded-md bg-[#F9F9F9] dark:bg-white/[0.03] border border-black/[0.06] dark:border-white/[0.07] px-3 py-2 flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[12.5px] font-medium text-[#1A1A1A] dark:text-[#F3F3F3]">
+                              {mod.preset.label}
+                            </span>
+                            <code className="px-1.5 py-0.2 rounded bg-black/[0.05] dark:bg-white/[0.08] font-mono text-[10.5px] text-[#0067C0] dark:text-[#60CDFF]">
+                              {mod.preset.cmdDisplay}
+                            </code>
+                            {mod.boundParam && (
+                              <span className="px-1.5 py-0.2 rounded bg-black/[0.04] dark:bg-white/[0.06] font-mono text-[10.5px] text-[#5D5D5D] dark:text-[#B5B5B5]">
+                                {mod.preset.paramLabel || '参数'}: {mod.boundParam}
+                              </span>
+                            )}
+                            {cs2Conflict && (
+                              <span
+                                className="px-1.5 py-0.2 rounded bg-[#C42B1C]/10 dark:bg-[#FF99A4]/15 text-[#C42B1C] dark:text-[#FF99A4] text-[10px] font-medium"
+                                title={`CS2 原绑定为「${formatCs2CommandLabel(cs2Conflict)}」`}
+                              >
+                                CS2 冲突
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10.5px] text-[#5D5D5D] dark:text-[#9A9A9A] mt-0.5 truncate">
+                            {mod.preset.category}
+                            {mod.isMarked ? ' · 模块化块' : ' · 已识别旧配置'} · 第 {mod.startLine + 1}
+                            {mod.endLine > mod.startLine ? `~${mod.endLine + 1}` : ''} 行
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {!mod.preset.isDirectCvar && (
+                            <button
+                              type="button"
+                              data-keybind-capture={`${mod.presetId}:key`}
+                              onClick={() =>
+                                setCapturingTarget(
+                                  isCapturingMod
+                                    ? null
+                                    : { presetId: mod.presetId, field: 'key', autoUpdate: true }
+                                )
+                              }
+                              className={`min-w-[68px] h-7 px-2 rounded-md border font-mono text-[11.5px] transition-colors flex items-center justify-center ${
+                                isCapturingMod
+                                  ? 'border-[#0067C0] dark:border-[#60CDFF] bg-[#0067C0]/10 dark:bg-[#60CDFF]/15 text-[#0067C0] dark:text-[#60CDFF] animate-pulse'
+                                  : 'fluent-input text-[#1A1A1A] dark:text-[#F3F3F3] hover:border-[#0067C0]/60 dark:hover:border-[#60CDFF]/60'
+                              }`}
+                              title="点击后直接按下新按键立即更新该模块"
+                            >
+                              {isCapturingMod ? '请按键...' : mod.boundKey || '未绑键'}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleRemoveModule(mod)}
+                            className="w-7 h-7 rounded-md bg-[#C42B1C]/10 hover:bg-[#C42B1C]/20 text-[#C42B1C] dark:text-[#FF99A4] flex items-center justify-center transition-colors"
+                            title={`移除模块「${mod.preset.label}」`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  {unmatchedBinds.length > 0 && (
+                    <div className="pt-2 space-y-1.5">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-[#5D5D5D] dark:text-[#9A9A9A] px-1">
+                        自定义 / 手动绑定 ({unmatchedBinds.length})
+                      </div>
+                      {unmatchedBinds.map((b) => (
+                        <div
+                          key={`${b.key}_${b.lineIndex}`}
+                          className="rounded-md bg-[#F9F9F9] dark:bg-white/[0.02] border border-black/[0.05] dark:border-white/[0.06] px-3 py-1.5 flex items-center justify-between gap-2"
+                        >
+                          <div className="min-w-0 flex items-center gap-2 font-mono text-[11.5px]">
+                            <span className="px-1.5 py-0.5 rounded bg-black/[0.06] dark:bg-white/[0.08] font-semibold shrink-0">
+                              {b.key}
+                            </span>
+                            <span className="truncate text-[#5D5D5D] dark:text-[#C5C5C5]" title={b.command}>
+                              {b.command}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveManualLine(b.lineIndex, `${b.key} → ${b.command}`)}
+                            className="w-6.5 h-6.5 rounded bg-[#C42B1C]/10 hover:bg-[#C42B1C]/20 text-[#C42B1C] dark:text-[#FF99A4] flex items-center justify-center shrink-0"
+                            title={`删除第 ${b.lineIndex + 1} 行绑定`}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          ) : (
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              spellCheck={false}
+              className="w-full h-[520px] p-3.5 rounded-md bg-[#FAFAFA] dark:bg-[#1C1C1C] border border-black/[0.08] dark:border-white/[0.08] font-mono text-[12.5px] leading-relaxed text-[#1A1A1A] dark:text-[#E6E6E6] outline-none focus:border-[#0067C0] dark:focus:border-[#60CDFF] resize-none"
+              placeholder="// 在此编写或从左侧选择模块化 CFG 指令自动装配..."
+            />
+          )}
 
           <div className="flex flex-wrap items-center justify-between gap-2 text-[11.5px] text-[#5D5D5D] dark:text-[#A0A0A0]">
             <span className="inline-flex items-center gap-1.5">
               <Sliders className="w-3.5 h-3.5" />
-              按 <code className="font-mono">Ctrl+S</code> 保存，CS2 控制台输入{' '}
-              <code className="font-mono">exec {activeFile}</code> 生效
+              按 <code className="font-mono">Ctrl+S</code> 保存，控制台 <code className="font-mono">exec {activeFile}</code> 生效
               <span className="opacity-75">
-                · {cs2KeysLoaded ? '已加载 CS2 本地键位检测' : '已启用 CS2 默认键位检测'}
+                · {cs2KeysLoaded ? 'CS2 本地键位检测' : 'CS2 默认键位检测'}
               </span>
             </span>
             <span className="font-mono inline-flex flex-wrap items-center gap-2">
@@ -1099,7 +1472,7 @@ export const CfgManagerView: React.FC<CfgManagerViewProps> = ({
                 <span className="text-[#9D5D00] dark:text-[#FCE100] font-sans font-medium">未保存</span>
               )}
               <span>
-                {existingBinds.size} 个绑定 · {content.split('\n').length} 行
+                {installedModules.length} 模块 · {existingBinds.size} 绑定
               </span>
             </span>
           </div>

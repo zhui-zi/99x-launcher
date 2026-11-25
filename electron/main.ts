@@ -22,7 +22,20 @@ import {
 import { startAutoJoin, stopAutoJoin, type AutoJoinOptions } from './services/autoJoin'
 import { connectToServer, detectGamePaths, isCs2Running } from './services/gameLauncher'
 import { deleteMapFiles, scanCs2MapFiles } from './services/mapCleaner'
-import { listCfgFiles, readCfgFile, readCs2UserKeys, writeCfgFile } from './services/cfgManager'
+import {
+  deleteCfgFile,
+  listCfgFiles,
+  readCfgFile,
+  readCs2UserKeys,
+  writeCfgFile
+} from './services/cfgManager'
+import {
+  checkGsiConfigInstalled,
+  getGsiState,
+  installGsiConfig,
+  startGsiServer,
+  stopGsiServer
+} from './services/gsiTracker'
 import { checkForUpdates, getAppVersion } from './services/updater'
 import { loadPersistedData, savePersistedData, type PersistedData } from './services/storage'
 
@@ -238,7 +251,15 @@ function registerIpcHandlers() {
   ipcMain.handle('cfg:write', (_, cs2Path: string, fileName: string, content: string) =>
     writeCfgFile(cs2Path, fileName, content)
   )
+  ipcMain.handle('cfg:delete', (_, cs2Path: string, fileName: string) =>
+    deleteCfgFile(cs2Path, fileName)
+  )
   ipcMain.handle('cfg:readCs2Keys', (_, steamPath: string) => readCs2UserKeys(steamPath))
+
+  // CS2 Game State Integration (GSI) Live Map & Round Tracker
+  ipcMain.handle('gsi:getState', () => getGsiState())
+  ipcMain.handle('gsi:checkConfig', (_, cs2Path: string) => checkGsiConfigInstalled(cs2Path))
+  ipcMain.handle('gsi:installConfig', (_, cs2Path: string) => installGsiConfig(cs2Path))
 
   // App Version & Update Checker
   ipcMain.handle('app:getVersion', () => getAppVersion())
@@ -267,6 +288,7 @@ if (!gotLock) {
     registerIpcHandlers()
     createTray()
     createWindow()
+    startGsiServer(() => mainWindow)
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -278,6 +300,7 @@ if (!gotLock) {
 app.on('before-quit', () => {
   isQuitting = true
   stopAutoJoin()
+  stopGsiServer()
   if (tray && !tray.isDestroyed()) {
     tray.destroy()
   }

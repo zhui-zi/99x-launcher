@@ -20,6 +20,7 @@ export interface MapPlayRecord {
   mapDisplayName: string
   difficulty: string
   playCount: number
+  roundCount?: number
   totalMinutes: number
   lastPlayedAt: string
   lastServerName: string
@@ -34,7 +35,31 @@ export interface PlaySessionLog {
   mapDisplayName: string
   difficulty: string
   joinedAt: string
+  endedAt?: string
   durationMinutes: number
+  roundsPlayed?: number
+  source?: 'gsi' | 'a2s_track' | 'launch'
+}
+
+export interface GsiLiveState {
+  connected: boolean
+  configInstalled: boolean
+  configPath: string
+  inGame: boolean
+  map: string
+  mapPhase: string
+  roundNumber: number
+  roundPhase: string
+  lastEventAt: number
+}
+
+export interface GsiPlayEvent {
+  type: 'map_start' | 'round_increment' | 'heartbeat' | 'map_end'
+  map: string
+  mapPhase: string
+  roundNumber: number
+  roundPhase: string
+  timestamp: number
 }
 
 export interface ServerHistoryPoint {
@@ -258,11 +283,26 @@ export interface Cs2Api {
       filePath?: string
       error?: string
     }>
+    delete: (cs2Path: string, fileName: string) => Promise<{
+      success: boolean
+      error?: string
+    }>
     readCs2Keys: (steamPath: string) => Promise<{
       found: boolean
       filePath: string
       bindings: Record<string, string>
     }>
+  }
+  gsi: {
+    getState: () => Promise<GsiLiveState>
+    checkConfig: (cs2Path: string) => Promise<{ installed: boolean; filePath: string }>
+    installConfig: (cs2Path: string) => Promise<{
+      success: boolean
+      filePath: string
+      error?: string
+    }>
+    onState: (cb: (state: GsiLiveState) => void) => () => void
+    onEvent: (cb: (ev: GsiPlayEvent) => void) => () => void
   }
   app: {
     getVersion: () => Promise<string>

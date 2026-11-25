@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { Users, Flame, Gauge, Wifi, Clock, History, Play, Trash2 } from 'lucide-react'
+import { Users, Flame, Wifi, Clock, History, Play, Trash2, Radio, CheckCircle2 } from 'lucide-react'
 import {
   ResponsiveContainer,
   AreaChart,
@@ -17,6 +17,7 @@ import {
 } from 'recharts'
 import type {
   ExgOnlineStatPoint,
+  GsiLiveState,
   MapPlayRecord,
   PlaySessionLog,
   ServerHistoryPoint,
@@ -30,6 +31,9 @@ interface AnalyticsViewProps {
   mapPlayStats: Record<string, MapPlayRecord>
   playSessions: PlaySessionLog[]
   serverHistory: Record<string, ServerHistoryPoint[]>
+  gsiState: GsiLiveState
+  cs2Path: string
+  onInstallGsi: () => Promise<void>
   onInspectServer: (server: ServerItem) => void
   onJoinServer: (server: ServerItem) => void
   onClearPlayStats: () => void
@@ -41,11 +45,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   mapPlayStats,
   playSessions,
   serverHistory,
-  onInspectServer,
+  gsiState,
+  cs2Path,
+  onInstallGsi,
   onJoinServer,
   onClearPlayStats
 }) => {
   const [historyTarget, setHistoryTarget] = useState<string>('EXG_24H')
+  const [topMetric, setTopMetric] = useState<'totalMinutes' | 'roundCount' | 'playCount'>('totalMinutes')
 
   const onlineServers = servers.filter((s) => s.online)
   const totalPlayers = onlineServers.reduce((acc, s) => acc + s.players, 0)
@@ -101,30 +108,78 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
     color: DIFFICULTY_STYLES[name as keyof typeof DIFFICULTY_STYLES]?.chartColor || '#8A8886'
   }))
 
-  // Personal map play stats Top 8
+  // Personal map play stats Top 8 (sortable by real minutes / rounds / map sessions)
   const topPlayedMaps = useMemo(() => {
     return Object.values(mapPlayStats)
-      .sort((a, b) => b.playCount - a.playCount || b.totalMinutes - a.totalMinutes)
-      .slice(0, 8)
       .map((m) => ({
         ...m,
+        roundCount: m.roundCount || 0,
+        totalMinutes: Math.round((m.totalMinutes || 0) * 10) / 10,
         shortName: (m.mapDisplayName || m.map).slice(0, 14)
       }))
-  }, [mapPlayStats])
+      .sort((a, b) => (b[topMetric] || 0) - (a[topMetric] || 0) || b.playCount - a.playCount)
+      .slice(0, 8)
+  }, [mapPlayStats, topMetric])
 
   const totalPlaySessionsCount = playSessions.length
-  const totalPlayMinutes = Object.values(mapPlayStats).reduce((acc, m) => acc + m.totalMinutes, 0)
+  const totalRoundsCount = Object.values(mapPlayStats).reduce((acc, m) => acc + (m.roundCount || 0), 0)
+  const totalPlayMinutes = Math.round(
+    Object.values(mapPlayStats).reduce((acc, m) => acc + (m.totalMinutes || 0), 0)
+  )
   const serverById = new Map(servers.map((s) => [s.id, s]))
 
   return (
     <div className="p-6 space-y-5 max-w-[1400px] mx-auto pb-16">
-      <div>
-        <h1 className="text-[22px] font-semibold tracking-tight text-[#1A1A1A] dark:text-[#F3F3F3]">
-          数据总览与游玩统计
-        </h1>
-        <p className="text-[12.5px] text-[#5D5D5D] dark:text-[#A0A0A0] mt-0.5">
-          服务器历史在线曲线、分组负载、地图难度分布与个人地图游玩统计
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-[22px] font-semibold tracking-tight text-[#1A1A1A] dark:text-[#F3F3F3]">
+            数据总览与游玩统计
+          </h1>
+          <p className="text-[12.5px] text-[#5D5D5D] dark:text-[#A0A0A0] mt-0.5">
+            服务器历史在线曲线、地图难度分布，以及基于 CS2 GSI 的实时换图 / 多局 / 真实时长统计
+          </p>
+        </div>
+
+        {/* Live GSI Tracking Status Pill */}
+        <div className="fluent-card px-3.5 py-2 flex items-center gap-2.5 text-[12px]">
+          {gsiState.connected && gsiState.inGame ? (
+            <>
+              <span className="w-2 h-2 rounded-full bg-[#0F7B0F] dark:bg-[#6CCB5F] animate-pulse shrink-0" />
+              <span className="text-[#0F7B0F] dark:text-[#6CCB5F] font-medium">
+                GSI 实时追踪中：{gsiState.map}
+                {gsiState.roundNumber > 0 ? ` · 第 ${gsiState.roundNumber} 局` : ''}
+              </span>
+            </>
+          ) : gsiState.connected ? (
+            <>
+              <CheckCircle2 className="w-3.5 h-3.5 text-[#0F7B0F] dark:text-[#6CCB5F] shrink-0" />
+              <span className="text-[#0F7B0F] dark:text-[#6CCB5F]">
+                CS2 GSI 已连接（主菜单待机，进图自动计局数与时长）
+              </span>
+            </>
+          ) : gsiState.configInstalled ? (
+            <>
+              <Radio className="w-3.5 h-3.5 text-[#0067C0] dark:text-[#60CDFF] shrink-0" />
+              <span className="text-[#5D5D5D] dark:text-[#A0A0A0]">
+                GSI 配置已就绪（重启/启动 CS2 后自动实时追踪游戏内换图与多局）
+              </span>
+            </>
+          ) : (
+            <>
+              <Radio className="w-3.5 h-3.5 text-[#9D5D00] dark:text-[#FCE100] shrink-0" />
+              <span className="text-[#9D5D00] dark:text-[#FCE100]">
+                尚未启用 CS2 GSI 精准追踪
+              </span>
+              <button
+                onClick={onInstallGsi}
+                disabled={!cs2Path}
+                className="h-6.5 px-2.5 fluent-btn-accent text-[11px] disabled:opacity-50"
+              >
+                一键启用
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* KPI Cards (WinUI 3 Layer Fill) */}
@@ -174,10 +229,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
             <Clock className="w-4 h-4 text-[#0067C0] dark:text-[#60CDFF]" />
           </div>
           <div className="mt-2 text-[26px] font-mono font-semibold text-[#1A1A1A] dark:text-[#F3F3F3]">
-            {totalPlaySessionsCount} <span className="text-[13px] font-normal text-[#5D5D5D]">次</span>
+            {totalPlayMinutes} <span className="text-[13px] font-normal text-[#5D5D5D]">分钟</span>
           </div>
           <div className="text-[11.5px] text-[#5D5D5D] dark:text-[#A0A0A0] mt-1">
-            累计记录 {Object.keys(mapPlayStats).length} 张图 · 约 {totalPlayMinutes} 分钟
+            {Object.keys(mapPlayStats).length} 张图 · {totalPlaySessionsCount} 场 · {totalRoundsCount} 局
           </div>
         </div>
       </div>
@@ -280,23 +335,46 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
       {/* Row 2: Personal Map Playtime Stats + Recent Play History */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="fluent-card p-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
             <div>
               <h2 className="text-[15px] font-semibold text-[#1A1A1A] dark:text-[#F3F3F3]">
                 个人最常游玩地图 Top 8
               </h2>
               <p className="text-[11.5px] text-[#5D5D5D] dark:text-[#A0A0A0]">
-                通过登录器加入服务器时自动累计地图游玩次数与时长
+                自动覆盖游戏内换图、同图多局与真实游玩时长
               </p>
             </div>
-            {topPlayedMaps.length > 0 && (
-              <button
-                onClick={onClearPlayStats}
-                className="h-7 px-2.5 fluent-btn-standard text-[11.5px] inline-flex items-center gap-1"
-              >
-                <Trash2 className="w-3 h-3" /> 清空统计
-              </button>
-            )}
+            <div className="flex items-center gap-1.5">
+              <div className="inline-flex rounded-md p-0.5 bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] text-[11px]">
+                {(
+                  [
+                    { id: 'totalMinutes', label: '时长' },
+                    { id: 'roundCount', label: '局数' },
+                    { id: 'playCount', label: '场次' }
+                  ] as const
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => setTopMetric(m.id)}
+                    className={`px-2 py-0.5 rounded transition-colors ${
+                      topMetric === m.id
+                        ? 'bg-white dark:bg-[#2C2C2C] text-[#0067C0] dark:text-[#60CDFF] shadow-sm font-medium'
+                        : 'text-[#5D5D5D] dark:text-[#A0A0A0]'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              {topPlayedMaps.length > 0 && (
+                <button
+                  onClick={onClearPlayStats}
+                  className="h-7 px-2.5 fluent-btn-standard text-[11.5px] inline-flex items-center gap-1"
+                >
+                  <Trash2 className="w-3 h-3" /> 清空
+                </button>
+              )}
+            </div>
           </div>
           <div className="h-60">
             {topPlayedMaps.length > 0 ? (
@@ -306,12 +384,23 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                   <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: '#888' }} />
                   <YAxis dataKey="shortName" type="category" width={105} tick={{ fontSize: 11, fill: '#888' }} />
                   <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12 }} />
-                  <Bar dataKey="playCount" name="游玩次数" fill="#0067C0" radius={[0, 4, 4, 0]} />
+                  <Bar
+                    dataKey={topMetric}
+                    name={
+                      topMetric === 'totalMinutes'
+                        ? '真实时长 (分钟)'
+                        : topMetric === 'roundCount'
+                          ? '累计局数'
+                          : '进入场次'
+                    }
+                    fill="#0067C0"
+                    radius={[0, 4, 4, 0]}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
               <div className="h-full flex items-center justify-center text-[12.5px] text-[#888]">
-                暂无游玩记录，通过登录器加入服务器后将自动生成你的专属地图统计
+                暂无游玩记录，进服游玩后将通过 GSI 与 A2S 自动记录换图、局数与真实时长
               </div>
             )}
           </div>
@@ -322,36 +411,47 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
             <div className="flex items-center gap-2">
               <History className="w-4 h-4 text-[#0067C0] dark:text-[#60CDFF]" />
               <h2 className="text-[15px] font-semibold text-[#1A1A1A] dark:text-[#F3F3F3]">
-                最近进服游玩记录
+                最近地图游玩记录
               </h2>
             </div>
             <span className="text-[11.5px] text-[#5D5D5D] dark:text-[#A0A0A0]">
-              共 {playSessions.length} 条
+              共 {playSessions.length} 场 · {totalRoundsCount} 局
             </span>
           </div>
 
           {playSessions.length === 0 ? (
             <div className="h-60 flex items-center justify-center text-[12.5px] text-[#888]">
-              尚未有进服记录
+              尚未有游玩记录
             </div>
           ) : (
             <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-              {playSessions.slice(0, 15).map((ses) => {
+              {playSessions.slice(0, 20).map((ses) => {
                 const srv = serverById.get(ses.serverId)
+                const mins = Math.round((ses.durationMinutes || 0) * 10) / 10
+                const rounds = ses.roundsPlayed || 0
                 return (
                   <div
                     key={ses.id}
                     className="rounded-md bg-[#F9F9F9] dark:bg-white/[0.03] border border-black/[0.05] dark:border-white/[0.06] px-3 py-2 flex items-center justify-between gap-2"
                   >
                     <div className="min-w-0">
-                      <div className="text-[12.5px] font-medium truncate">
-                        {ses.serverName}{' '}
-                        <span className="text-[11px] text-[#5D5D5D] dark:text-[#A0A0A0] font-normal">
-                          · {ses.mapDisplayName || ses.map}
-                        </span>
+                      <div className="text-[12.5px] font-medium truncate flex items-center gap-1.5">
+                        <span className="truncate">{ses.mapDisplayName || ses.map}</span>
+                        {ses.source === 'gsi' && (
+                          <span className="px-1.5 py-0.2 rounded bg-[#0F7B0F]/10 dark:bg-[#6CCB5F]/15 text-[#0F7B0F] dark:text-[#6CCB5F] text-[10px] shrink-0">
+                            GSI 实时
+                          </span>
+                        )}
+                        {ses.source === 'a2s_track' && (
+                          <span className="px-1.5 py-0.2 rounded bg-[#0067C0]/10 dark:bg-[#60CDFF]/15 text-[#0067C0] dark:text-[#60CDFF] text-[10px] shrink-0">
+                            换图追踪
+                          </span>
+                        )}
                       </div>
-                      <div className="text-[11px] font-mono text-[#5D5D5D] dark:text-[#A0A0A0]">
-                        {new Date(ses.joinedAt).toLocaleString()} · {ses.difficulty}
+                      <div className="text-[11px] font-mono text-[#5D5D5D] dark:text-[#A0A0A0] truncate">
+                        {ses.serverName} · {mins > 0 ? `${mins} 分钟` : '<1 分钟'}
+                        {rounds > 0 ? ` · ${rounds} 局` : ''} · {ses.difficulty} ·{' '}
+                        {new Date(ses.joinedAt).toLocaleTimeString()}
                       </div>
                     </div>
                     {srv && (

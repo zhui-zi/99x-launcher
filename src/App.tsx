@@ -20,6 +20,8 @@ import type {
   CustomServerConfig,
   DifficultyLevel,
   ExgOnlineStatPoint,
+  GsiLiveState,
+  GsiPlayEvent,
   LauncherSettings,
   MapChangeEvent,
   MapPlayRecord,
@@ -108,6 +110,17 @@ export function App() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [countdownSec, setCountdownSec] = useState(3)
   const [cs2Running, setCs2Running] = useState(false)
+  const [gsiState, setGsiState] = useState<GsiLiveState>({
+    connected: false,
+    configInstalled: false,
+    configPath: '',
+    inGame: false,
+    map: '',
+    mapPhase: '',
+    roundNumber: 0,
+    roundPhase: '',
+    lastEventAt: 0
+  })
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('')
@@ -139,6 +152,33 @@ export function App() {
   const watchedIdsRef = useRef<Set<string>>(new Set())
   const watchedKeywordsRef = useRef<string[]>([])
   const lastHistorySampleRef = useRef<number>(0)
+  const gsiConnectedRef = useRef<boolean>(false)
+  const lastJoinedServerRef = useRef<{
+    serverId: string
+    serverName: string
+    community: CommunityId | 'custom'
+    joinedAtMs: number
+  } | null>(null)
+  const activePlayRef = useRef<{
+    sessionId: string
+    mapKey: string
+    map: string
+    serverId: string
+    serverName: string
+    community: CommunityId | 'custom'
+    startedAtMs: number
+    lastFlushedAtMs: number
+    roundsPlayed: number
+    source: 'gsi' | 'a2s_track' | 'launch'
+  } | null>(null)
+  const mapLookupIndexRef = useRef<ReturnType<typeof buildMapLookupIndex>>(
+    buildMapLookupIndex({}, [])
+  )
+  const allServersRef = useRef<ServerItem[]>([])
+
+  useEffect(() => {
+    gsiConnectedRef.current = gsiState.connected
+  }, [gsiState.connected])
 
   useEffect(() => {
     watchedIdsRef.current = new Set(watchedServerIds)
@@ -155,40 +195,185 @@ export function App() {
     }, 3000)
   }, [])
 
-  // Record a map play session whenever user connects to a server
-  const recordMapPlay = useCallback((server: ServerItem) => {
-    const mapKey = (server.map || 'unknown').toLowerCase()
-    const nowIso = new Date().toISOString()
+  // Flush real elapsed minutes (and optional round increment) for the active play session
+  const flushActivePlayProgress = useCallback(
+    (nowMs: number, addRounds = 0, finalize = false) => {
+      const cur = activePlayRef.current
+      if (!cur) return
 
-    setMapPlayStats((prev) => {
-      const existing = prev[mapKey]
-      const updated: MapPlayRecord = {
-        map: server.map || 'unknown',
-        mapDisplayName: server.mapDisplayName || existing?.mapDisplayName || '',
-        difficulty: server.mapDifficulty || existing?.difficulty || '未知',
-        playCount: (existing?.playCount || 0) + 1,
-        totalMinutes: (existing?.totalMinutes || 0) + 20, // estimated baseline per session
-        lastPlayedAt: nowIso,
-        lastServerName: server.displayName
+      const deltaMinRaw = Math.max(0, (nowMs - cur.lastFlushedAtMs) / 60000)
+      const shouldCommitTime = finalize || addRounds > 0 || deltaMinRaw >= 0.5
+      if (!shouldCommitTime) return
+
+      const deltaMin = Math.round(deltaMinRaw * 10) / 10
+      const totalSessionMin = Math.max(
+        0.1,
+        Math.round(((nowMs - cur.startedAtMs) / 60000) * 10) / 10
+      )
+      cur.lastFlushedAtMs = nowMs
+      cur.roundsPlayed += addRounds
+
+      const nowIso = new Date(nowMs).toISOString()
+
+      if (deltaMin > 0 || addRounds > 0) {
+        setMapPlayStats((prev) => {
+          const existing = prev[cur.mapKey]
+          if (!existing) return prev
+          return {
+            ...prev,
+            [cur.mapKey]: {
+              ...existing,
+              roundCount: (existing.roundCount || 0) + addRounds,
+              totalMinutes: Math.round((existing.totalMinutes + deltaMin) * 10) / 10,
+              lastPlayedAt: nowIso
+            }
+          }
+        })
       }
-      return { ...prev, [mapKey]: updated }
-    })
 
-    setPlaySessions((prev) => [
-      {
-        id: `ses_${Date.now()}`,
+      setPlaySessions((prev) =>
+        prev.map((ses) =>
+          ses.id === cur.sessionId
+            ? {
+                ...ses,
+                durationMinutes: totalSessionMin,
+                roundsPlayed: cur.roundsPlayed,
+                source: cur.source,
+                endedAt: finalize ? nowIso : ses.endedAt
+              }
+            : ses
+        )
+      )
+
+      if (finalize) {
+        activePlayRef.current = null
+      }
+    },
+    []
+  )
+
+  const startTrackedMapSession = useCallback(
+    (params: {
+      map: string
+      mapDisplayName?: string
+      difficulty?: string
+      serverId: string
+      serverName: string
+      community: CommunityId | 'custom'
+      source: 'gsi' | 'a2s_track' | 'launch'
+      initialRounds?: number
+      timestampMs?: number
+    }) => {
+      const nowMs = params.timestampMs || Date.now()
+      const cleanMap = (params.map || '').trim()
+      if (!cleanMap || cleanMap === '<empty>') return
+      const mapKey = cleanMap.toLowerCase()
+
+      // If GSI confirms the exact same map right after clicking Join in launcher, upgrade in-place without double counting
+      const cur = activePlayRef.current
+      if (
+        cur &&
+        params.source === 'gsi' &&
+        cur.source === 'launch' &&
+        cur.mapKey === mapKey &&
+        nowMs - cur.startedAtMs < 180_000
+      ) {
+        cur.source = 'gsi'
+        if (params.initialRounds && cur.roundsPlayed === 0) {
+          flushActivePlayProgress(nowMs, params.initialRounds, false)
+        }
+        return
+      }
+
+      // Close previous active map session before starting a new map
+      if (cur) {
+        flushActivePlayProgress(nowMs, 0, true)
+      }
+
+      const resolved = resolveMapMeta(
+        cleanMap,
+        params.mapDisplayName,
+        params.difficulty,
+        mapLookupIndexRef.current
+      )
+      const nowIso = new Date(nowMs).toISOString()
+      const sessionId = `ses_${nowMs}_${Math.random().toString(36).slice(2, 6)}`
+      const initRounds = params.initialRounds ?? 0
+
+      activePlayRef.current = {
+        sessionId,
+        mapKey,
+        map: cleanMap,
+        serverId: params.serverId,
+        serverName: params.serverName,
+        community: params.community,
+        startedAtMs: nowMs,
+        lastFlushedAtMs: nowMs,
+        roundsPlayed: initRounds,
+        source: params.source
+      }
+
+      setMapPlayStats((prev) => {
+        const existing = prev[mapKey]
+        const updated: MapPlayRecord = {
+          map: cleanMap,
+          mapDisplayName: resolved.mapDisplayName || existing?.mapDisplayName || '',
+          difficulty: resolved.mapDifficulty || existing?.difficulty || '未知',
+          playCount: (existing?.playCount || 0) + 1,
+          roundCount: (existing?.roundCount || 0) + initRounds,
+          totalMinutes: existing?.totalMinutes || 0,
+          lastPlayedAt: nowIso,
+          lastServerName: params.serverName
+        }
+        return { ...prev, [mapKey]: updated }
+      })
+
+      setPlaySessions((prev) =>
+        [
+          {
+            id: sessionId,
+            serverId: params.serverId,
+            serverName: params.serverName,
+            community: params.community,
+            map: cleanMap,
+            mapDisplayName: resolved.mapDisplayName || '',
+            difficulty: resolved.mapDifficulty || '未知',
+            joinedAt: nowIso,
+            durationMinutes: 0,
+            roundsPlayed: initRounds,
+            source: params.source
+          },
+          ...prev
+        ].slice(0, 150)
+      )
+    },
+    [flushActivePlayProgress]
+  )
+
+  // Record a map play session whenever user connects to a server via launcher
+  const recordMapPlay = useCallback(
+    (server: ServerItem) => {
+      const nowMs = Date.now()
+      lastJoinedServerRef.current = {
         serverId: server.id,
         serverName: server.displayName,
         community: server.community,
+        joinedAtMs: nowMs
+      }
+      startTrackedMapSession({
         map: server.map || 'unknown',
-        mapDisplayName: server.mapDisplayName || '',
-        difficulty: server.mapDifficulty || '未知',
-        joinedAt: nowIso,
-        durationMinutes: 20
-      },
-      ...prev
-    ].slice(0, 100))
-  }, [])
+        mapDisplayName: server.mapDisplayName,
+        difficulty: server.mapDifficulty,
+        serverId: server.id,
+        serverName: server.displayName,
+        community: server.community,
+        source: 'launch',
+        initialRounds: 0,
+        timestampMs: nowMs
+      })
+    },
+    [startTrackedMapSession]
+  )
 
   // Auto Light/Dark theme adaptation (system | light | dark)
   useEffect(() => {
@@ -455,6 +640,66 @@ export function App() {
     }
   }, [showToast, recordMapPlay])
 
+  // Auto-ensure CS2 Game State Integration config is installed when cs2Path is configured
+  useEffect(() => {
+    if (!window.cs2Api || !settings.cs2Path) return
+    window.cs2Api.gsi.checkConfig(settings.cs2Path).then(async (res) => {
+      if (!res?.installed) {
+        await window.cs2Api?.gsi.installConfig(settings.cs2Path)
+      }
+      const st = await window.cs2Api?.gsi.getState()
+      if (st) setGsiState(st)
+    })
+  }, [settings.cs2Path])
+
+  // Subscribe to real-time CS2 GSI state & play events (in-game map switches + per-round tracking)
+  useEffect(() => {
+    if (!window.cs2Api) return
+
+    window.cs2Api.gsi.getState().then((st) => {
+      if (st) setGsiState(st)
+    })
+
+    const unsubState = window.cs2Api.gsi.onState((st) => {
+      setGsiState(st)
+    })
+
+    const unsubEvent = window.cs2Api.gsi.onEvent((ev: GsiPlayEvent) => {
+      const nowMs = ev.timestamp || Date.now()
+      if (ev.type === 'map_start') {
+        const recentJoined = lastJoinedServerRef.current
+        const matchedSrv =
+          (recentJoined &&
+            allServersRef.current.find((s) => s.id === recentJoined.serverId)) ||
+          allServersRef.current.find(
+            (s) => s.online && s.map.toLowerCase() === ev.map.toLowerCase()
+          )
+        startTrackedMapSession({
+          map: ev.map,
+          mapDisplayName: matchedSrv?.mapDisplayName,
+          difficulty: matchedSrv?.mapDifficulty,
+          serverId: recentJoined?.serverId || matchedSrv?.id || 'gsi_live',
+          serverName: recentJoined?.serverName || matchedSrv?.displayName || 'CS2 游戏内追踪',
+          community: recentJoined?.community || matchedSrv?.community || 'custom',
+          source: 'gsi',
+          initialRounds: ev.roundPhase === 'live' || ev.roundNumber > 0 ? 1 : 0,
+          timestampMs: nowMs
+        })
+      } else if (ev.type === 'round_increment') {
+        flushActivePlayProgress(nowMs, 1, false)
+      } else if (ev.type === 'heartbeat') {
+        flushActivePlayProgress(nowMs, 0, false)
+      } else if (ev.type === 'map_end') {
+        flushActivePlayProgress(nowMs, 0, true)
+      }
+    })
+
+    return () => {
+      unsubState()
+      unsubEvent()
+    }
+  }, [startTrackedMapSession, flushActivePlayProgress])
+
   // Unified map metadata index (EXG mapLists + cross-community live data + built-in fallback)
   const mapLookupIndex = useMemo(() => {
     const allLive = [
@@ -464,6 +709,8 @@ export function App() {
     ]
     return buildMapLookupIndex(mapDict, allLive)
   }, [mapDict, communityCache])
+
+  mapLookupIndexRef.current = mapLookupIndex
 
   // Merge active community + matching custom servers + live A2S data
   const allServers: ServerItem[] = useMemo(() => {
@@ -552,6 +799,43 @@ export function App() {
 
     return items
   }, [communityCache, customServers, a2sCache, mapLookupIndex, settings.activeCommunity])
+
+  allServersRef.current = allServers
+
+  // Fallback active-server map-change & elapsed-time tracker when GSI is not yet connected (before CS2 restarts)
+  useEffect(() => {
+    if (gsiConnectedRef.current) return
+    const cur = activePlayRef.current
+    if (!cur) return
+
+    const nowMs = Date.now()
+    if (!cs2Running) {
+      // Allow 60s grace window right after clicking Join while Steam starts CS2
+      if (nowMs - cur.startedAtMs > 60_000) {
+        flushActivePlayProgress(nowMs, 0, true)
+      }
+      return
+    }
+
+    flushActivePlayProgress(nowMs, 0, false)
+
+    if (cur.serverId && cur.serverId !== 'gsi_live') {
+      const srv = allServers.find((s) => s.id === cur.serverId)
+      if (srv && srv.online && srv.map && srv.map.toLowerCase() !== cur.mapKey) {
+        startTrackedMapSession({
+          map: srv.map,
+          mapDisplayName: srv.mapDisplayName,
+          difficulty: srv.mapDifficulty,
+          serverId: srv.id,
+          serverName: srv.displayName,
+          community: srv.community,
+          source: 'a2s_track',
+          initialRounds: 1,
+          timestampMs: nowMs
+        })
+      }
+    }
+  }, [allServers, cs2Running, flushActivePlayProgress, startTrackedMapSession])
 
   // Map-change monitor + Per-server historical player sampling (every 60s)
   useEffect(() => {
@@ -1223,9 +1507,24 @@ export function App() {
               mapPlayStats={mapPlayStats}
               playSessions={playSessions}
               serverHistory={serverHistory}
+              gsiState={gsiState}
+              cs2Path={settings.cs2Path}
+              onInstallGsi={async () => {
+                if (!window.cs2Api || !settings.cs2Path) {
+                  showToast('请先在设置中配置 CS2 安装目录')
+                  return
+                }
+                const res = await window.cs2Api.gsi.installConfig(settings.cs2Path)
+                if (res.success) {
+                  showToast('已写入 CS2 GSI 监听配置，重启 CS2 后即可实时追踪换图与每局回合数')
+                } else {
+                  showToast(`安装 GSI 配置失败：${res.error || '未知错误'}`)
+                }
+              }}
               onInspectServer={(s) => setInspectServerId(s.id)}
               onJoinServer={handleJoinServer}
               onClearPlayStats={() => {
+                activePlayRef.current = null
                 setMapPlayStats({})
                 setPlaySessions([])
                 showToast('已清空个人地图游玩统计')
